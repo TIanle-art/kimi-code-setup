@@ -53,7 +53,7 @@ metadata:
 | 0 | 装好 kimi-code + 摸清现状 + 备份 | `kimi --version` 有输出；知道配置目录、有没有配过 | 本文 |
 | 1 | LLM provider、模型与思考强度 | 新进程里能正常对话、思考强度符合预期 | 本文 |
 | 2 | 内置 WebSearch / FetchURL → 自己的 Exa | 三层验证全过；Windows 上自启项写完要回读确认（见细则第 3 节） | `references/web-tools-exa.md` |
-| 3 | MCP 通道（exa + kimi-cu） | 工具清单里出现 `mcp__exa__*` 与 kimi-cu 的 computer-use 工具（手写条目的是 `mcp__kimi-cu__*`，Windows 官方插件是 `mcp__plugin-kimi-cu-win_win__*`）；两条并存会被 `verify.py` 报 FAIL | 本文 |
+| 3 | 外部工具通道（exa 走 mcp.json、computer-use 走官方下载） | 工具清单里出现 `mcp__exa__*` 与 computer-use 工具（官方插件 `mcp__plugin-kimi-cu-win_win__*` / macOS `mcp__plugin-kimi-cu_*`）；若还看到旧的 `mcp__kimi-cu__*`，说明手写条目没删——`verify.py` 会报 FAIL | 本文 |
 | 4 | 权限模式（Ask When Needed）与工具开关 | 启动就是期望的模式、工具没被 disabled | 本文 |
 | 5 | 策略文件 AGENTS.md | 模型知道何时用哪条通道；任务清单那三条约定也在里面 | 本文 |
 | 6 | Todo 面板守卫（Stop 钩子 + 约定） | 攻击性用例被拦下（`verify.py` 钩子项 PASS + 一次 `kimi -p` 实测） | `references/todo-panel-guard.md` |
@@ -172,9 +172,9 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
 
 **动手前必读 `references/web-tools-exa.md`**：HTTP 契约、mac / win / linux 三套常驻命令、验证命令、排错表、回滚都在那里。Windows 实测提醒：非管理员机器上计划任务会 `Access is denied`、`HKCU\...\Run` 可能被安全软件静默回滚（写完立刻回读），最后一条**启动文件夹快捷方式**不需要提权；桥的令牌与日志靠 `assets/windows-launch.pyw.template` 生成的 `launch.pyw`（`pythonw` 没有控制台，不包装就没有 `bridge.log`）。
 
-### 3. MCP 通道（默认装 exa + kimi-cu）
+### 3. 外部工具通道（exa 走 mcp.json、computer-use 走官方下载）
 
-`~/.kimi-code/mcp.json`：
+`~/.kimi-code/mcp.json` —— **只放 exa**（kimi-cu 不走这里，官方插件自带声明，见下）：
 
 ```json
 {
@@ -182,20 +182,24 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
     "exa": {
       "url": "https://mcp.exa.ai/mcp",
       "headers": { "x-api-key": "<Exa key>" }
-    },
-    "kimi-cu": {
-      "command": "/Applications/KimiCU.app/Contents/MacOS/kimi-cu",
-      "args": ["mcp", "-s", "user"]
     }
   }
 }
 ```
 
 - **exa**：与内置通道是**同一把 Exa key、同一份额度**，但能力是超集：多 URL 批量抓取、`maxCharacters`、`numResults`/`objective`、`agent_run` 多步调研。
-- **kimi-cu（默认也装上）**：操作本机真实浏览器 / App 的 computer-use 工具（`mcp__kimi-cu__*`：截图读界面、点击、输入、滚动……）。
-  - **macOS**：前置条件是装了 KimiCU.app，`command` 指向 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu`（上面那段 JSON 就是它）。首次调用若报权限错误，去「系统设置 → 隐私与安全性」给 KimiCU 打开辅助功能 / 屏幕录制。
-  - **Windows（2026-09-16 查证 + 实测）**：**别手写 `mcp.json`**，走官方插件——① 装 runtime：`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-RestMethod 'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1' | Invoke-Expression"`（脚本自己校验 SHA-256 + Authenticode 签名，装到 `%LOCALAPPDATA%\KimiCU\kimi-cu.exe`，并注册登录自启）；② 在 TUI 里 `/plugins install https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`（`/plugins` 是**交互式斜杠命令，`kimi -p` 里不会执行**）；③ 若之前手写过 `mcp.json` 的 kimi-cu 条目，这时候删掉，再 `/reload` 或新开会话——**顺序别反**，两条并存会各拉一个实例抢键鼠（`verify.py` 的 MCP 检查专门拦这一条）。插件自带 MCP 声明（`cmd /c bin\kimi-cu-mcp.cmd` → `%LOCALAPPDATA%\KimiCU\kimi-cu.exe mcp`，cwd 是插件根），装好后工具名是 **`mcp__plugin-kimi-cu-win_win__*`**，不再叫 `mcp__kimi-cu__*`——写 AGENTS.md / 权限规则时按这个改。**Windows 桌面端设置里的「Computer Use」是 macOS 专属**（`process.platform !== "darwin"` 直接返回 unsupported），找不到它是正常的。
-  - 注意：Windows 版**会短暂接管真实鼠标键盘**（不如 macOS 能稳定后台注入），且目标程序以管理员运行时 KimiCU 也要同级权限；安全软件可能拦"输入注入"，需要放行。
+- **kimi-cu（computer-use，默认也装上）**：操作本机真实浏览器 / App 界面的工具——截图读界面、点击、输入、滚动……
+  - **一律走 kimi 官方下载**。kimi-code 自己内置了这个能力（`kimiCu.ts`：先 `detect` 再 `install`），安装器从官方 CDN 取包、装插件，**并且会自动移除旧的 `mcp.json` 手写注册**：
+
+    | 平台 | 官方下载（`https://cdn.kimi.com/…`） | 插件 id | 装好后的工具名 |
+    |------|--------------------------------------|---------|----------------|
+    | macOS | `kimi-computer-use/latest/KimiCU.app.zip`（App，用 `ditto` 解压）+ `kimi-computer-use/latest/kimi-cu-plugin.zip`（插件），装完跑 `request-permissions --ax --screen` | `kimi-cu` | `mcp__plugin-kimi-cu_<server>__*` |
+    | Windows | `kimi-computer-use-windows/latest/setup_windows.ps1`（校验 SHA-256 + Authenticode，把 runtime 装到 `%LOCALAPPDATA%\KimiCU\`）+ `kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`（插件） | `kimi-cu-win` | `mcp__plugin-kimi-cu-win_win__*` |
+
+  - **手动装**（两条路等价，Windows 侧实测过）：TUI 里 `/plugins install <上表 plugin.zip 的完整 URL>`（`/plugins` 是**交互式斜杠命令，`kimi -p` 里不会执行**）；Windows 的 runtime 也可以直接跑官方脚本：`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-RestMethod 'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1' | Invoke-Expression"`。装完 `/reload` 或新开会话生效。
+  - **别再手写 `mcp.json` 的 kimi-cu 条目**：官方插件自带 MCP 声明（Windows 是 `cmd /c bin\kimi-cu-mcp.cmd` → `%LOCALAPPDATA%\KimiCU\kimi-cu.exe mcp`，cwd 是插件根）。手写条目与插件**并存会各拉一个实例抢键鼠**——`verify.py` 的 MCP 检查专门拦这一条（实测报 FAIL），所以切换顺序是「先装插件 → 再删手写条目 → `/reload` 或新开会话」。
+  - **macOS 权限**：首次调用若报权限错误，按安装器提示、或去「系统设置 → 隐私与安全性」给 KimiCU 打开辅助功能 / 屏幕录制。
+  - **Windows 注意**：需要 PowerShell 5.1 或 7；会短暂接管真实鼠标键盘（不如 macOS 能稳定后台注入）；目标程序以管理员运行时 KimiCU 也要同级权限；安全软件可能拦"输入注入"，需要放行。另外**桌面端设置里的「Computer Use」是 macOS 专属**（`process.platform !== "darwin"` 直接返回 unsupported），Windows 上找不到它是正常的。
 - 权限：`[[permission.rules]]` + `decision = "allow"` + `pattern = "mcp__exa__*"`；**kimi-cu 别给 allow，让它按默认询问**——它会真的动你的鼠标键盘。
 - `enabled` / `startupTimeoutMs` / `toolTimeoutMs` / `enabledTools` 都可省；改完新开会话生效。
 
@@ -207,7 +211,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
 | 内置做不到的：一次抓多个 URL、控长 `maxCharacters`、`numResults`/`objective`、多步调研 `agent_run` | exa 的 `mcp__exa__*` |
 | 内置通道坏了（桥挂 / 没起） | 切 `mcp__exa__*`（独立连接，不受桥影响） |
 | 内网地址、localhost、要登录态 cookie 的页面 | 只能 Bash curl（两条通道都抓不到） |
-| 要操作本机浏览器 / App 界面 | `mcp__kimi-cu__*` |
+| 要操作本机浏览器 / App 界面 | computer-use 工具（官方插件：`mcp__plugin-kimi-cu-win_win__*` / macOS `mcp__plugin-kimi-cu_*`） |
 
 ### 4. 权限模式（Ask When Needed）与工具开关
 
@@ -233,7 +237,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" ensure-rule allow 'mcp__exa__*'
 
 kimi-code 会读（层级叠加，就近优先）：`~/.kimi-code/AGENTS.md` → 项目 `.kimi-code/AGENTS.md` → 项目 `AGENTS.md`（另有 `~/.agents/AGENTS.md`）。新机器至少写清联网工具的分工，否则模型不知道什么时候换通道：
 
-> **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl；要操作本机浏览器 / App 界面时用 computer-use 工具——手写 `mcp.json` 条目叫 `mcp__kimi-cu__*`，Windows 官方插件叫 `mcp__plugin-kimi-cu-win_win__*`（按你机器上实际装的写进去）。
+> **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl；要操作本机浏览器 / App 界面时用 computer-use 工具（官方插件：Windows `mcp__plugin-kimi-cu-win_win__*`、macOS `mcp__plugin-kimi-cu_*`）。
 
 ### 6. Todo 面板守卫（Stop 钩子 + 约定）
 
@@ -325,7 +329,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - **别手动改 `config.toml` / `tui.toml`（增、改、删都不行）**——重复表 = 整份配置失效，`patch-config.py` 就是为这个存在的：写入用 `set` / `ensure-rule` / `ensure-hook`，删除用 `unset` / `remove-rule` / `remove-hook`。
 - **别主动跑 `/login`**：它会重写 `config.services`，把 Exa 通道顶掉（用户自己要登录另说，登完记得复检）。
 - **别覆盖 `config.toml`**：只动该动的字段（providers 里其它条目、用户自己的注释都留着）。
-- **别给 `mcp__kimi-cu__*` 加 allow 规则**：它会真的操纵键鼠，保持按默认询问。
+- **别给 computer-use 工具加 allow 规则**（官方插件 `mcp__plugin-kimi-cu-win_win__*` / macOS `mcp__plugin-kimi-cu_*`）：它会真的操纵键鼠，保持按默认询问。
 - **别把 A 机器的 key 写进 B 机器**：key 属于用户，缺就让用户贴；写进文件的路径是 plist / `mcp.json` / `config.toml`，**不要贴进聊天正文**。
 - **别重复追加 MCP server**：`mcp.json` 是 JSON，后写的键覆盖前面的（不会报错但会静默丢配置），改前先读现有内容。
 - **别跳步验收**：`verify.py` 没全绿就说"配好了"是不允许的；没验证的项要明说。
@@ -356,7 +360,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 ## 参考：作者机器上的现状（搬配置/对照用）
 
 - `~/.kimi-code/config.toml`：`default_model = "deepseek/deepseek-flash"`（DeepSeek V4.1 Flash）、`default_permission_mode = "yolo"`（Ask When Needed）、`[thinking] effort = "max"` 与该模型的 `default_effort = "max"`、`[services.*]` 指向本机 exa-bridge、`[[permission.rules]]` 放行 `mcp__exa__*`、`[[hooks]]` 一条 `Stop` 钩子指向 `~/.kimi-code/hooks/todo-panel-guard.py`（`timeout = 5`）。
-- `mcp.json`：`exa`（MCP 通道）+ `kimi-cu`；`AGENTS.md`：联网工具分工 + 任务清单三条约定 + 本 skill 的触发约定。
+- `mcp.json`：只有 `exa`（computer-use 走官方插件，**不写进 `mcp.json`**）；`AGENTS.md`：联网工具分工 + 任务清单三条约定 + 本 skill 的触发约定。
 - 常驻：macOS LaunchAgent `ai.kimi.exa-bridge`；脚本 `~/.kimi-code/exa-bridge/exa-bridge.py`（除 `/search`、`/fetch` 外还带只读的 `/status` 与 `/panel`，供 kimi web 端小面板用），日志同目录 `bridge.log`，本地令牌写在 `config.toml` 的两处 `[services.*].api_key` 里。
 - 面板守卫：`~/.kimi-code/hooks/todo-panel-guard.py`（与本目录 `assets/` 副本逐字节一致，sha256 前 12 位 `bcab948b6ff0`）；端到端实测过——`kimi -p` 故意留一个全 done 面板，被钩子拦回、模型随后自行清空。
 - 状态栏：`~/.kimi-code/statusline.py`（与本目录 `assets/` 副本逐字节一致，sha256 前 12 位 `dc0642a2e5f2`）+ `tui.toml` 的 `[status_line].command = "python3 ~/.kimi-code/statusline.py"`；端到端实测过——另起一个临时实例截屏，footer 第一行渲染出 `… cache 98%  bal ¥44.50 …`。
@@ -368,4 +372,4 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`）。
 - 钩子 / 状态栏命令都写成 `python3 C:/Users/<你>/.kimi-code/...`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。
 - 常驻：启动文件夹快捷方式 `kimi-exa-bridge.lnk` → `pythonw.exe "%USERPROFILE%\.kimi-code\exa-bridge\launch.pyw"`（计划任务被非管理员权限拒、`HKCU\...\Run` 被火绒回滚，见 `references/web-tools-exa.md`）。桥日志照常落在 `%USERPROFILE%\.kimi-code\exa-bridge\bridge.log`。
-- kimi-cu：runtime 装在 `%LOCALAPPDATA%\KimiCU\kimi-cu.exe`；**实机走官方插件路线（2026-09-16 切换完成）**——TUI 里 `/plugins install …/kimi-cu-win-plugin.zip`（`/plugins` 是交互式命令，`kimi -p` 里执行不了），v0.2.17 落在 `~/.kimi-code/plugins/managed/kimi-cu-win/`，注册表 `~/.kimi-code/plugins/installed.json` 记 `enabled: true`。插件自带 MCP 声明 `mcpServers.win`（`cmd.exe` + `bin\kimi-cu-mcp.cmd`，cwd 是插件根，13 个 enabledTools），所以**工具名是 `mcp__plugin-kimi-cu-win_win__*`**，不再是 `mcp__kimi-cu__*`；`mcp.json` 里**已无** kimi-cu 条目。**两条路互斥**（并存＝两个实例抢键鼠）：`verify.py` 的 MCP 检查专门拦这一条（实测会报 FAIL），切换顺序是「先 `/plugins install` → 再删 `mcp.json` 条目 → 最后 `/reload` 或新开会话」。
+- kimi-cu（computer-use）：**全部走官方下载**——Windows 侧是官方 runtime（`setup_windows.ps1` → `%LOCALAPPDATA%\KimiCU\`）+ 官方插件（`/plugins install …/kimi-cu-win-plugin.zip`；2026-09-16 实机切换完成，v0.2.17 落在 `~/.kimi-code/plugins/managed/kimi-cu-win/`，`plugins/installed.json` 记 `enabled: true`）；kimi-code 自己内置了这个能力的安装器（`kimiCu.ts`），会顺手**移除旧的 `mcp.json` 手写注册**。插件自带 MCP 声明 `mcpServers.win`（`cmd.exe` + `bin\kimi-cu-mcp.cmd`，cwd 是插件根，13 个 enabledTools），所以**工具名是 `mcp__plugin-kimi-cu-win_win__*`**，不再是 `mcp__kimi-cu__*`；`mcp.json` 里**已无** kimi-cu 条目。**两条路互斥**（并存＝两个实例抢键鼠）：`verify.py` 的 MCP 检查专门拦这一条（实测会报 FAIL），切换顺序是「先装插件 → 再删手写条目 → 最后 `/reload` 或新开会话」。
