@@ -130,6 +130,7 @@ def session_usage(session_id):
 
         totals = state["totals"]
         offset = int(state["offset"])
+        start_offset = offset          # 只有真读到新行才值得落盘（否则每秒白写一次状态文件）
         deadline = time.monotonic() + USAGE_BUDGET_S
         with open(path, "rb") as fh:
             fh.seek(offset)
@@ -149,7 +150,8 @@ def session_usage(session_id):
                 pending = pending[cut:]
         state["offset"] = offset
         state["totals"] = totals
-        write_state(cache_path, state)
+        if offset != start_offset:
+            write_state(cache_path, state)
         return totals
     except Exception:
         return state.get("totals")
@@ -335,7 +337,9 @@ def _extract_balance(flavor, data):
 def mode_badge(payload):
     parts = []
     permission = payload.get("permissionMode")
-    if permission == "yolo":
+    if permission == "manual":                      # 显示名取自 CLI 的 PERMISSION_MODE_DISPLAY_NAMES
+        parts.append(color(33, bold("Always Ask")))
+    elif permission == "yolo":
         parts.append(color(33, bold("Ask When Needed")))
     elif permission == "auto":
         parts.append(color(33, bold("Never Ask")))

@@ -239,7 +239,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" ensure-rule allow 'mcp__exa__*'
 
 kimi-code 会读（层级叠加，就近优先）：`~/.kimi-code/AGENTS.md` → 项目 `.kimi-code/AGENTS.md` → 项目 `AGENTS.md`（另有 `~/.agents/AGENTS.md`）。新机器至少写清联网工具的分工，否则模型不知道什么时候换通道：
 
-> **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl；要操作本机浏览器 / App 界面时用 computer-use 工具（官方插件：Windows `mcp__plugin-kimi-cu-win_win__*`、macOS `mcp__plugin-kimi-cu_*`）。
+> **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl；要操作本机浏览器 / App 界面时用 computer-use 工具（官方插件：Windows `mcp__plugin-kimi-cu-win_win__*`、macOS `mcp__plugin-kimi-cu_*`；**Linux 上不装**，见第 3 步）。
 
 ### 6. Todo 面板守卫（Stop 钩子 + 约定）
 
@@ -366,8 +366,8 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - `~/.kimi-code/config.toml`：`default_model = "deepseek/deepseek-flash"`（DeepSeek V4.1 Flash）、`default_permission_mode = "yolo"`（Ask When Needed）、`[thinking] effort = "max"` 与该模型的 `default_effort = "max"`、`[services.*]` 指向本机 exa-bridge、`[[permission.rules]]` 放行 `mcp__exa__*`、`[[hooks]]` 一条 `Stop` 钩子指向 `~/.kimi-code/hooks/todo-panel-guard.py`（`timeout = 5`）。
 - `mcp.json`：只有 `exa`（computer-use 走官方插件，**不写进 `mcp.json`**）；`AGENTS.md`：联网工具分工 + 任务清单三条约定 + 本 skill 的触发约定。
 - 常驻：macOS LaunchAgent `ai.kimi.exa-bridge`；脚本 `~/.kimi-code/exa-bridge/exa-bridge.py`（除 `/search`、`/fetch` 外还带只读的 `/status` 与 `/panel`，供 kimi web 端小面板用），日志同目录 `bridge.log`，本地令牌写在 `config.toml` 的两处 `[services.*].api_key` 里。
-- 面板守卫：`~/.kimi-code/hooks/todo-panel-guard.py`（与本目录 `assets/` 副本逐字节一致，sha256 前 12 位 `bcab948b6ff0`）；端到端实测过——`kimi -p` 故意留一个全 done 面板，被钩子拦回、模型随后自行清空。
-- 状态栏：`~/.kimi-code/statusline.py`（与本目录 `assets/` 副本逐字节一致，sha256 前 12 位 `dc0642a2e5f2`）+ `tui.toml` 的 `[status_line].command = "python3 ~/.kimi-code/statusline.py"`；端到端实测过——另起一个临时实例截屏，footer 第一行渲染出 `… cache 98%  bal ¥44.50 …`。
+- 面板守卫：`~/.kimi-code/hooks/todo-panel-guard.py`（与本目录 `assets/` 副本逐字节一致；要核对就跑 `verify.py` 的「守卫脚本一致性」一项，别依赖写死的哈希——行尾一变哈希就全废）；端到端实测过——`kimi -p` 故意留一个全 done 面板，被钩子拦回、模型随后自行清空。
+- 状态栏：`~/.kimi-code/statusline.py`（与本目录 `assets/` 副本逐字节一致，同样看 `verify.py` 的「状态栏脚本一致性」）+ `tui.toml` 的 `[status_line].command = "python3 ~/.kimi-code/statusline.py"`；端到端实测过——另起一个临时实例截屏，footer 第一行渲染出 `… cache 98%  bal ¥44.50 …`。
 - 本机体检基线（2026-09-15，kimi-code 0.41.0）：`verify.py` **34 项通过 / 0 告警 / 0 失败**（当时网络是通的）。代理出口挂掉时唯一失败项会是"出网不通"，属网络层，与配置无关。
 
 ### Windows 11 实测基线（2026-09-16，kimi-code 0.43.1，Store 版 Python 3.13，非管理员账户）
@@ -380,7 +380,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 
 ### Linux 实测基线（2026-09-16，WSL2 + kimi-code 0.41.0，Python 3.14.7，非 root）
 
-- `verify.py`：**33 项通过 / 0 告警 / 0 失败**；`--e2e` 35 项全过（真实搜索走桥成功、`bridge.log` 同步增长）。kimi-cu 那两项在 Linux 上降级成 `INFO`——没有官方路径，不该算告警。
+- `verify.py`：**34 项通过 / 0 告警 / 0 失败**；`--e2e` 36 项全过（真实搜索走桥成功、`bridge.log` 同步增长）。kimi-cu 那两项在 Linux 上降级成 `INFO`——没有官方路径，不该算告警。
 - `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"` + 模型级 `default_effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`、`[status_line].command`）。
 - 常驻：systemd 用户单元 `ai.kimi.exa-bridge`（`~/.config/systemd/user/`，`enable --now`；软链落在 `default.target.wants/`）。`loginctl enable-linger "$USER"` 在 WSL2 上**免提权**通过；`kill -9` 桥后 `Restart=always` 几秒内拉起（新 PID + `/health` 恢复）。
 - 钩子 / 状态栏命令都写成 `python3 ~/.kimi-code/hooks/todo-panel-guard.py` / `python3 ~/.kimi-code/statusline.py`（与 macOS 相同；`~` 由 shell 展开，实测可用）。

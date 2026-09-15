@@ -74,7 +74,7 @@ echo '{"model":"X","cwd":"'$HOME'","permissionMode":"yolo","sessionId":"session_
 - 缓存率是**会话累计**（含 `usage.record` 的所有轮次），不是"最近一次请求"。
 - Kimi 托管账号（`/login`）走 `/usages` 配额接口、需要 OAuth 凭据，本脚本**不接**——那种机器上余额段自动消失，缓存率不受影响。
 - 本机实测（kimi-code 0.41.0，2026-09-15，macOS）：footer 渲染正常（另起临时实例截屏确认）、余额 ¥44.50 正常、脚本热路径 44ms（预算 300ms）。
-- Linux 实测（WSL2 + kimi-code 0.41.0 + Python 3.14，2026-09-16）：脚本行为自测通过（`cache 90%`）；**footer 那一行没在 TUI 里肉眼复核**（只验到脚本层）。桥的存活由 systemd `Restart=always` 兜（`kill -9` 后几秒自动拉起），用不上 Windows 那条探活自愈。
+- Linux 实测（WSL2 + kimi-code 0.41.0 + Python 3.14，2026-09-16）：脚本行为自测通过（`cache 90%`）；真机负载下全程 **26–31 ms**（spawn→出结果，6 次取样，预算 300ms），真实余额渲染正常（`bal ¥33.06`）；**footer 那一行没在 TUI 里肉眼复核**（只验到脚本层）。桥的存活由 systemd `Restart=always` 兜（`kill -9` 后几秒自动拉起），用不上 Windows 那条探活自愈。
 - Windows 实测（kimi-code 0.43.1 + Store 版 Python 3.13，2026-09-16）：脚本输出正确（`cache 95%`、余额走 DeepSeek `/user/balance` 拿到 ¥39.25），后台刷新子进程正常；耗时直连 200ms → 惰性导入后 **113ms**，经 `cmd.exe` 244ms → **156ms**。
 - **Windows footer 渲染（2026-09-16 截屏复核，同一台）**：footer 第一行确实渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新——这条以前写的是"没在这一台复核"，现在补上了。链路构成（本机实测）：`cmd.exe /d /s /c` + Store 版 Python 启动 ≈165ms，脚本自身 ≈40ms（import 12.5 + `load_config` 14.6 + usage 扫描 6.3 + 组行 3~10），合计 ~200ms，300ms 预算只剩三成余量。
 - **超时是静默的，且跟机器忙不忙强相关**：runner 的 300ms 从 spawn 起算，超时就 `taskkill /T /F` 丢掉这次结果、回落内置布局，下一次成功再切回来——所以"footer 一直没出现 `cache N%`"时要先看当时机器是不是在跑重活（大量并行子进程会把 165ms 的启动开销顶过 300ms），别只怀疑脚本。想确认 TUI 到底有没有在调，可以在命令外面套一层探针脚本记录调用时刻（**实测 1 次/秒**）；runner 会给子进程注入 `KIMI_CODE_STATUS_LINE=1`，用它区分"runner 在调"和"别的东西在调"。

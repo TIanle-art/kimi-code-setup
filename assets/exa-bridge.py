@@ -26,11 +26,13 @@ Environment:
 """
 
 import glob
+import hmac
 import json
 import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -113,53 +115,65 @@ def handle_search(body: dict) -> tuple[int, dict]:
     }
     try:
         data = exa_post("/search", payload, timeout=25)
+        results = []
+        for item in (data.get("results") if isinstance(data, dict) else None) or []:
+            if not isinstance(item, dict) or not item.get("url"):
+                continue
+            entry = {
+                "title": str(item.get("title") or ""),
+                "url": str(item["url"]),
+                "snippet": snippet_of(item),
+            }
+            if item.get("publishedDate"):
+                entry["date"] = str(item["publishedDate"])
+            if site_name(entry["url"]):
+                entry["site_name"] = site_name(entry["url"])
+            results.append(entry)
+        return 200, {"search_results": results}
     except Exception as exc:
+        # /search 允许非 200，但异常不能穿出去——穿出去就是连接被断，CLI 只看得到连接错误
         return 502, {"error": describe_error(exc)}
-    results = []
-    for item in data.get("results") or []:
-        if not isinstance(item, dict) or not item.get("url"):
-            continue
-        entry = {
-            "title": str(item.get("title") or ""),
-            "url": str(item["url"]),
-            "snippet": snippet_of(item),
-        }
-        if item.get("publishedDate"):
-            entry["date"] = str(item["publishedDate"])
-        if site_name(entry["url"]):
-            entry["site_name"] = site_name(entry["url"])
-        results.append(entry)
-    return 200, {"search_results": results}
 
 
 def handle_fetch(body: dict) -> tuple[int, str, str]:
-    url = str(body.get("url", "")).strip()
-    if not url:
-        return 400, "text/plain", "missing url"
-    payload = {"urls": [url], "text": {"maxCharacters": PAGE_TEXT_CHARS}}
+    """抓取：**任何失败都必须回 200**（原因写进正文）。
+
+    CLI 的实现是 try{远程} catch{本地直连}——非 200 或抛异常会让它静默回落到本地
+    抓取，在有 fake-IP 代理的机器上表现成 WEB_PRIVATE_ADDRESS，而真正的原因（Exa
+    报错 / 响应形状变了）全被这条回落吞掉。所以这里连异常都不许穿出去。
+    """
     try:
-        data = exa_post("/contents", payload, timeout=45)
-    except Exception as exc:
-        # Stay 200 so the CLI does not silently fall back to its local fetcher.
-        return 200, "text/markdown", f"[exa-bridge] fetch failed: {describe_error(exc)}"
-    for item in data.get("results") or []:
-        text = item.get("text") if isinstance(item, dict) else None
-        if isinstance(text, str) and text.strip():
-            title = str(item.get("title") or "").strip()
-            body_text = f"# {title}\n\n{text}" if title else text
-            return 200, "text/markdown", body_text
-    statuses = data.get("statuses") or []
-    detail = ""
-    if statuses and isinstance(statuses[0], dict):
-        error = statuses[0].get("error") or {}
-        detail = str(error.get("tag") or statuses[0].get("status") or "")
-    return 200, "text/markdown", f"[exa-bridge] no content returned for {url} {detail}".strip()
+        url = str(body.get("url", "")).strip()
+        if not url:
+            return 200, "text/plain", "[exa-bridge] missing url"
+        payload = {"urls": [url], "text": {"maxCharacters": PAGE_TEXT_CHARS}}
+        try:
+            data = exa_post("/contents", payload, timeout=45)
+        except Exception as exc:
+            return 200, "text/markdown", f"[exa-bridge] fetch failed: {describe_error(exc)}"
+        results = data.get("results") if isinstance(data, dict) else None
+        for item in results or []:
+            text = item.get("text") if isinstance(item, dict) else None
+            if isinstance(text, str) and text.strip():
+                title = str(item.get("title") or "").strip()
+                body_text = f"# {title}\n\n{text}" if title else text
+                return 200, "text/markdown", body_text
+        statuses = data.get("statuses") if isinstance(data, dict) else None
+        detail = ""
+        if isinstance(statuses, list) and statuses and isinstance(statuses[0], dict):
+            error = statuses[0].get("error") or {}
+            detail = str(error.get("tag") or statuses[0].get("status") or "")
+        return 200, "text/markdown", f"[exa-bridge] no content returned for {url} {detail}".strip()
+    except Exception as exc:                      # 兜底：异常穿出去 = 连接被断 + CLI 回落本地直连
+        return 200, "text/markdown", f"[exa-bridge] fetch error: {describe_error(exc)}"
 
 
 # ------------------------------------------------------- /status + /panel
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-_STATUS_CACHE = {"ts": 0.0, "key": None, "payload": None}
+_STATUS_CACHE = {}                      # session 键 → {"ts": 跑完的时刻, "payload": ...}
+_STATUS_CACHE_MAX = 8
+_STATUS_LOCK = threading.Lock()
 
 
 def newest_session_id() -> str:
@@ -167,7 +181,10 @@ def newest_session_id() -> str:
     files = glob.glob(pattern)
     if not files:
         return ""
-    newest = max(files, key=os.path.getmtime)
+    try:
+        newest = max(files, key=os.path.getmtime)
+    except OSError:                     # 会话正好在 glob 与 stat 之间被删/归档
+        return ""
     return os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(newest))))
 
 
@@ -177,12 +194,16 @@ def session_exists(session_id: str) -> bool:
 
 
 def status_payload(session_id: str) -> dict:
-    """跑一次本地 statusline.py，把缓存率/余额抽成结构化 JSON（结果缓存 2 秒）。"""
-    now = time.monotonic()
-    if (_STATUS_CACHE["payload"] is not None
-            and _STATUS_CACHE["key"] == session_id
-            and now - _STATUS_CACHE["ts"] < STATUS_TTL_S):
-        return _STATUS_CACHE["payload"]
+    """跑一次本地 statusline.py，把缓存率/余额抽成结构化 JSON（结果缓存 2 秒）。
+
+    缓存按 session 分槽，别用单槽：`/panel`（不带 session）和浏览器用户脚本（带
+    session）交替请求时单槽会互相顶掉，每次都白跑一遍子进程。锁只护缓存读写，
+    不护子进程调用——不然一个 8s 的超时会挡住所有请求。
+    """
+    with _STATUS_LOCK:
+        hit = _STATUS_CACHE.get(session_id)
+        if hit and time.monotonic() - hit["ts"] < STATUS_TTL_S:
+            return hit["payload"]
 
     sid = session_id or newest_session_id()
     result = {"ok": False, "session": sid, "text": "", "cache": None, "balance": None}
@@ -214,7 +235,11 @@ def status_payload(session_id: str) -> dict:
         except Exception as exc:
             result["error"] = "%s: %s" % (type(exc).__name__, exc)
 
-    _STATUS_CACHE.update({"ts": now, "key": session_id, "payload": result})
+    with _STATUS_LOCK:
+        _STATUS_CACHE[session_id] = {"ts": time.monotonic(), "payload": result}
+        if len(_STATUS_CACHE) > _STATUS_CACHE_MAX:      # 只留最近几槽，别无限长
+            for stale in sorted(_STATUS_CACHE, key=lambda k: _STATUS_CACHE[k]["ts"])[:-_STATUS_CACHE_MAX]:
+                _STATUS_CACHE.pop(stale, None)
     return result
 
 
@@ -278,6 +303,7 @@ PANEL_HTML = """<!doctype html>
 class Handler(BaseHTTPRequestHandler):
     server_version = "exa-bridge/1.0"
     protocol_version = "HTTP/1.1"
+    timeout = 30          # 空闲连接别永久占线程：客户端连上不发言，读超时后自行断开
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -296,7 +322,7 @@ class Handler(BaseHTTPRequestHandler):
         expected = os.environ.get("EXA_BRIDGE_TOKEN", "").strip()
         if not expected:
             return True
-        return self.headers.get("Authorization", "") == f"Bearer {expected}"
+        return hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {expected}")
 
     def _local_host(self) -> bool:
         """只认本机 Host，挡 DNS rebinding（/status、/panel 用）。"""
@@ -331,7 +357,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         # Read the body before anything else: an undrained body would be parsed
         # as the next request line on this keep-alive connection.
-        length = int(self.headers.get("Content-Length") or 0)
+        if self.headers.get("Transfer-Encoding"):
+            # 不解析 chunked：读不干净就会污染 keep-alive（README 里那条 400 的成因），
+            # 直接关连接比半读安全。
+            self.close_connection = True
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            self.close_connection = True
+            self._json(400, {"error": "bad content-length"})
+            return
         raw = self.rfile.read(length) if length else b""
         if not self._authorized():
             self._json(401, {"error": "unauthorized"})

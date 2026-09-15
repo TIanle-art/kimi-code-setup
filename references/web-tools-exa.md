@@ -27,7 +27,7 @@ FetchURL  ──POST /fetch ──►   （纯标准库 Python）      ──►
 
 三个反直觉点，脚本里已经处理，改的时候别改回去：
 
-1. **抓取失败必须回 200**。CLI 的实现是 `try { 远程 } catch { localFallback.fetch(...) }`——非 200 或异常会**静默回落本地直连**。在 TUN/fake-IP 代理环境下域名被解析到 `198.18.x.x` 保留段，看到的是 `WEB_PRIVATE_ADDRESS`，而不是真正的错误原因。所以脚本把失败写进正文、状态码仍给 200。
+1. **抓取失败必须回 200**。CLI 的实现是 `try { 远程 } catch { localFallback.fetch(...) }`——非 200 或异常会**静默回落本地直连**。在 TUN/fake-IP 代理环境下域名被解析到 `198.18.x.x` 保留段，看到的是 `WEB_PRIVATE_ADDRESS`，而不是真正的错误原因。所以脚本把失败写进正文、状态码仍给 200。（2026-09-16 补：`handle_fetch` 整体包了 `try/except`，连桥自己内部的异常也回 200——之前只兜住了"Exa 调用失败"这一条路，响应形状一变仍可能穿出去。）
 2. **认证是本地令牌，不是 Exa key**。CLI 会带 `Authorization: Bearer <config.toml 里 [services.*].api_key>`，这只是本机闸门（脚本侧 `EXA_BRIDGE_TOKEN` 留空则不校验）。Exa key 只在脚本内部使用。
 3. **401 之后必须读完请求体**（脚本已修）：keep-alive 连接上没读干净的 body 会被当成下一条请求行，表现为紧随其后的请求莫名 `400 Bad request syntax`。
 
@@ -204,6 +204,19 @@ loginctl enable-linger "$USER"    # 关键：纯 SSH / 不登录图形会话时�
 - 日志：unit 里把 stdout/stderr 写进了 `bridge.log`；systemd 自己的记录用 `journalctl --user -u ai.kimi.exa-bridge -n 50 --no-pager`。
 - 环境变量同理**不继承 shell**（`export HTTPS_PROXY=…` 对 systemd 无效），要显式写进 unit 的 `Environment=`。
 - WSL2 实测：`enable` 建的软链在 `~/.config/systemd/user/default.target.wants/`；`kill -9` 掉桥后 `Restart=always` 会在几秒内拉起来（新 PID + `/health` 恢复）。macOS/Windows 那套"兜底自愈"在这儿用不上——状态栏脚本里那个探活拉起是 Windows 专属。
+- **`KIMI_CODE_HOME` 不在默认位置时要显式写进 unit**：桥不继承 shell 环境变量，自定义过 home 的机器加一行 `Environment=KIMI_CODE_HOME=/your/.kimi-code`，否则桥会去默认 `~/.kimi-code` 找 `mcp.json` 的 key 和 `sessions/`（现象：`/health` 报 `key:false`、`/status` 一直空）。
+- **日志别让它无限长**：桥对每个请求写一行，unit 用 `StandardOutput=append:` 只追加不轮转。长期常驻的机器挂一份 logrotate（写日志的进程不会重开文件，所以用 `copytruncate`）：
+
+  ```bash
+  # /etc/logrotate.d/kimi-exa-bridge（要 root；不想动系统就定期手工 `: > bridge.log`）
+  /home/<你>/.kimi-code/exa-bridge/bridge.log {
+      weekly
+      rotate 4
+      copytruncate
+      missingok
+      notifempty
+  }
+  ```
 
 **兜底**：不装常驻，需要时前台 `python3 ~/.kimi-code/exa-bridge/exa-bridge.py`。
 

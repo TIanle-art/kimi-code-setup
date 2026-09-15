@@ -11,8 +11,9 @@
 
 [Unit]
 Description=kimi-code exa-bridge（WebSearch / FetchURL 的内置适配器）
-After=network-online.target
-Wants=network-online.target
+# 别写 After=/Wants=network-online.target：那是**系统**管理器里的 target，用户单元
+# 跨不过去，写了等于空转（实测：systemd --user 里根本没有这个单元）。桥是惰性出网
+# （第一个请求才连 Exa），起早了不影响；真碰上网络没起来，Restart=always 会兜。
 
 [Service]
 Type=simple
@@ -20,6 +21,8 @@ ExecStart=__PYTHON__ __SCRIPT__
 Environment=EXA_BRIDGE_PORT=__PORT__
 Environment=EXA_API_KEY=__EXA_API_KEY__
 Environment=EXA_BRIDGE_TOKEN=__EXA_BRIDGE_TOKEN__
+# 把 kimi-code 的 home 挪到过别处（设过 KIMI_CODE_HOME）才需要下面这行——systemd 不继承 shell：
+# Environment=KIMI_CODE_HOME=/home/you/.kimi-code
 # 不用 TUN、改成在终端 export 代理时，取消下面两行注释（systemd 不继承 shell 环境变量）：
 # Environment=HTTPS_PROXY=http://127.0.0.1:7890
 # Environment=NO_PROXY=127.0.0.1,localhost

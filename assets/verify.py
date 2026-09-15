@@ -9,7 +9,7 @@
 退出码：0 全通过 / 1 有告警 / 2 有失败
 
 这个脚本只读：不改任何配置文件（--e2e 除外，它会新起一个会话，产生 session 文件）。
-永不打印密钥明文。出网不通时会把"桥失败"降级为告警——先分清是网络问题还是配置问题。
+密钥只以掩码出现（前 6 位 + 长度，够你核对是哪把），不打印完整明文。出网不通时会把"桥失败"降级为告警——先分清是网络问题还是配置问题。
 """
 
 import argparse
@@ -295,7 +295,9 @@ def check_launch_def(home, token):
     if not path.exists():
         add("INFO", "常驻定义：本机没有 %s（前台跑桥时属正常）" % path)
         return
-    text = path.read_text(encoding="utf-8", errors="replace")
+    # 必须按字节读：文本模式的 universal newlines 会把 \r\n 悄悄折成 \n，
+    # 而这里恰恰是要抓那个 \r（实测：用 read_text 时自测第 2 种情形永远 PASS）
+    text = path.read_bytes().decode("utf-8", "replace")
     if "\r" in text:
         add("FAIL", "常驻定义有 CR（\\r）：%s —— 多半是从 CRLF 模板 sed 出来的，令牌尾部会多"
                     "一个回车。用 `tr -d '\\r' < 模板 | sed …` 重新生成"
@@ -312,7 +314,7 @@ def check_launch_def(home, token):
     if live != live.strip():
         add("FAIL", "%s：令牌首尾有多余空白（长度 %d，config.toml 里是 %d）——两边必然对不上"
             % (label, len(live), len(token) if token else 0))
-        live = live.strip()
+        return                      # 别再往下说"一致"：尾部带 \r 就是坏的，哪怕 strip 后相等
     if not live:
         add("INFO", "%s：令牌留空 = 桥不校验（config.toml 里写不写都行）" % label)
     elif not token:
@@ -322,6 +324,43 @@ def check_launch_def(home, token):
     else:
         add("FAIL", "常驻定义令牌：%s 与 config.toml 的 api_key 不一致（定义 %s / 配置 %s）—— "
                     "直打桥会 401；改哪边都行，改完重启桥" % (label, mask(live), mask(token)))
+
+
+def launch_def_behaves():
+    """验证「常驻定义令牌」这条检查自己的解析：一致→PASS、尾部 \\r→FAIL、值不同→FAIL。
+
+    用临时文件 + 临时替换 native_launch_def 跑，不碰真实机器、也不把探针输出打进结果。
+    """
+    import contextlib
+    import io
+    import tempfile
+    saved_native = native_launch_def
+    saved_results = list(RESULTS)
+    levels = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "ai.kimi.exa-bridge.service"
+            for text, token, want in (("Environment=EXA_BRIDGE_TOKEN=abc\n", "abc", "PASS"),
+                                      ("Environment=EXA_BRIDGE_TOKEN=abc\r\n", "abc", "FAIL"),
+                                      ("Environment=EXA_BRIDGE_TOKEN=abc\n", "xyz", "FAIL")):
+                probe.write_bytes(text.encode())
+                RESULTS.clear()
+                globals()["native_launch_def"] = lambda home, _p=probe: ("probe", _p)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    check_launch_def(Path("."), token)
+                levels.append(RESULTS[-1][0] if RESULTS else "（无输出）")
+    finally:
+        RESULTS[:] = saved_results
+        globals()["native_launch_def"] = saved_native
+    want_levels = ["PASS", "FAIL", "FAIL"]
+    if levels != want_levels:
+        return False, "期望 %s，实际 %s" % (want_levels, levels)
+    return True, "一致→PASS、尾部 \\r→FAIL、值不同→FAIL"
+
+
+def check_launch_def_selftest():
+    ok, detail = launch_def_behaves()
+    add("PASS" if ok else "FAIL", "常驻定义解析行为：%s" % detail)
 
 
 def plugin_mcp_servers(home):
@@ -487,7 +526,7 @@ def check_logs(home):
 
 
 def hook_blocks_correctly(script):
-    """用临时 KIMI_CODE_HOME + 假会话日志验证守卫脚本：全 done 拦、清空放行。不碰真实数据。"""
+    """用临时 KIMI_CODE_HOME + 假会话日志验证守卫脚本的 5 种情形。不碰真实数据。"""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         probe_home = Path(tmp) / "home"
@@ -499,22 +538,34 @@ def hook_blocks_correctly(script):
             encoding="utf-8")
         wire = wire_dir / "wire.jsonl"
 
-        def run(todos):
-            wire.write_text(
-                json.dumps({"created_at": 1, "event": {"type": "step.begin", "turnId": "t1"}}) + "\n"
-                + json.dumps({"created_at": 2, "event": {"type": "tool.call", "name": "TodoList",
-                                                         "turnId": "t1", "args": {"todos": todos}}}) + "\n",
-                encoding="utf-8")
+        def run(events, session="probe"):
+            wire.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
             env = dict(os.environ, KIMI_CODE_HOME=str(probe_home))
-            proc = subprocess.run([sys.executable, str(script)], input='{"session_id": "probe"}',
+            proc = subprocess.run([sys.executable, str(script)],
+                                  input=json.dumps({"session_id": session}),
                                   capture_output=True, text=True, timeout=15, env=env)
             return proc.returncode
 
-        blocked = run([{"title": "a", "status": "done"}])
-        cleared = run([])
-    if blocked == 2 and cleared == 0:
-        return True, "全 done → 拦住（exit 2），清空 → 放行（exit 0）"
-    return False, "行为不符：全 done → exit %s（期望 2），清空 → exit %s（期望 0）" % (blocked, cleared)
+        def begin(turn):
+            return {"created_at": 1, "event": {"type": "step.begin", "turnId": turn}}
+
+        def todo(turn, todos):
+            return {"created_at": 2, "event": {"type": "tool.call", "name": "TodoList",
+                                               "turnId": turn, "args": {"todos": todos}}}
+
+        done = [{"title": "a", "status": "done"}]
+        pend = [{"title": "a", "status": "pending"}]
+        cases = {
+            "全 done → 拦（期望 2）": (run([begin("t1"), todo("t1", done)]), 2),
+            "有未完成 → 放行": (run([begin("t1"), todo("t1", pend)]), 0),
+            "本轮已清空 → 放行": (run([begin("t1"), todo("t1", [])]), 0),
+            "跨回合（上一轮留的全 done）→ 放行": (run([begin("t1"), todo("t1", done), begin("t2")]), 0),
+            "未知 session_id → 放行": (run([begin("t1"), todo("t1", done)], session="nope"), 0),
+        }
+    bad = ["%s：实际 %s" % (name, got) for name, (got, _want) in cases.items() if got != _want]
+    if bad:
+        return False, "行为不符：%s" % "、".join(bad)
+    return True, "5 种情形全过（全 done→拦；未完成 / 已清空 / 跨回合 / 未知 session→放行）"
 
 
 def check_hooks(home, cfg):
@@ -626,6 +677,10 @@ def patch_script_behaves(script):
             and 'api_key = "abc"' in cfg.read_text(encoding="utf-8")
         results["set 改值"] = run("set", "services.moonshot_search.api_key", "def").returncode == 0 \
             and cfg.read_text(encoding="utf-8").count("api_key") == 1
+        # 值里带 \r（CRLF 模板 sed 出来的令牌）必须当场拒绝、且不落盘
+        before = cfg.read_text(encoding="utf-8")
+        results["拒绝控制字符"] = run("set", "services.moonshot_search.api_key", "abc\r").returncode == 2 \
+            and cfg.read_text(encoding="utf-8") == before
         results["ensure-hook 幂等"] = run("ensure-hook", "Stop", "python3 /tmp/guard.py").returncode == 0 \
             and run("ensure-hook", "Stop", "python3 /tmp/guard.py").returncode == 0 \
             and cfg.read_text(encoding="utf-8").count("[[hooks]]") == 1
@@ -636,7 +691,7 @@ def patch_script_behaves(script):
         bad = [name for name, ok in results.items() if not ok]
     if bad:
         return False, "失败步骤：%s" % "、".join(bad)
-    return True, "set 新增/改值、ensure-hook 幂等、unset 删键与清空表头 全过"
+    return True, "set 新增/改值、拒绝控制字符、ensure-hook 幂等、unset 删键与清空表头 全过"
 
 
 def check_patch_script(skill_dir):
@@ -756,6 +811,7 @@ def main():
     check_logs(home)
     check_assets(args.skill_dir, home)
     check_patch_script(args.skill_dir)
+    check_launch_def_selftest()
     check_trigger_chain(home)
     if args.e2e:
         run_e2e("用内置 WebSearch 搜一下 exa.ai 的定价，一句话回答", args.timeout)
