@@ -44,6 +44,7 @@ fixture 覆盖的 5 种情形（`verify.py` 的「钩子脚本行为」一项）
   python3 "$SKILL_DIR/assets/patch-config.py" remove-hook Stop "python3 ~/.kimi-code/hooks/todo-panel-guard.py"
   rm ~/.kimi-code/hooks/todo-panel-guard.py
   ```
+- **`remove-hook` 的 command 必须与当初写入的逐字一致**（它按 event+command 精确匹配）：Windows 上装的时候写的是 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`，删除就得用这一串；照抄上面那种 `~` 写法会报"没找到匹配的 [[hooks]] 块"、钩子删不掉（退出码 2）。
 - 被拦得太频繁：说明面板确实还留着全 done 的条目，清空即可；确认不想要就把钩子摘掉。
 - 钩子没反应：先 `python3 "$SKILL_DIR/assets/patch-config.py" check`（规则在不在）→ 确认脚本文件存在 → 确认是**新会话**（钩子不热加载）。
 - 钩子本身不写日志、静默生效；脚本行为异常时 `verify.py` 的「钩子脚本行为」一项会 FAIL。

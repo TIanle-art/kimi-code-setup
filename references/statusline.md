@@ -1,6 +1,6 @@
-# 状态栏：缓存命中率 + API 余额
+# 状态栏：权限模式 + 上下文量 + 缓存命中率 + API 余额
 
-**用途**：footer 第一行常显**整个会话的缓存命中率**和**当前 provider 的 API 余额**——不用开 `/usage` 就知道缓存省了多少、这把 key 还剩多少钱。
+**用途**：footer 第一行常显权限模式、当前上下文用量、整个会话的缓存命中率和当前 provider 的 API 余额。上下文量来自 kimi-code 的状态快照；有 token 数时显示 `context 35% (350k/1000k)`，只有比例时显示百分比。
 
 ## 机制
 
@@ -9,7 +9,7 @@
 - **缓存率**：扫 `~/.kimi-code/sessions/*/session_<id>/agents/main/wire.jsonl` 里全部 `usage.record` 事件，按 `inputCacheRead / (inputCacheRead + inputCacheCreation + inputOther)` 计算——与 `/usage` 面板同源，两边数字对得上。只统计主 agent，不含子 agent。
 - **余额**：从 `config.toml` 找到当前模型对应的 provider，调它的余额接口（DeepSeek `/user/balance`、Moonshot `/users/me/balance`），结果缓存在 `~/.kimi-code/statusline/balance-<provider>.json`，默认 5 分钟刷新一次；网络请求丢给 detached 子进程，主路径（300ms 预算内）只读缓存文件。
 - **增量**：日志按字节偏移量续读（偏移量与累计值存在 `statusline/usage-<session>.json`），单次最多花 0.15s，超大日志分几次收敛，不卡渲染。
-- 显示格式：`<模式徽章>  <模型名>  cache 98%  bal ¥44.50  cached 5.8M · uncached 74.3k  ~/proj main`，缓存率按 ≥80% 绿 / ≥50% 黄 / 红着色；顺序是刻意的——窄终端截断时先保住缓存率和余额。
+- 显示格式：`<模式徽章>  context 35% (350k/1000k)  <模型名>  cache 98%  bal ¥44.50  cached 5.8M · uncached 74.3k  ~/proj main`，缓存率按 ≥80% 绿 / ≥50% 黄 / 红着色。权限模式与上下文量放在最前，窄终端截断时仍容易看见。
 
 ## 安装
 
@@ -76,7 +76,7 @@ echo '{"model":"X","cwd":"'$HOME'","permissionMode":"yolo","sessionId":"session_
 - 本机实测（kimi-code 0.41.0，2026-09-15，macOS）：footer 渲染正常（另起临时实例截屏确认）、余额 ¥44.50 正常、脚本热路径 44ms（预算 300ms）。
 - Linux 实测（WSL2 + kimi-code 0.41.0 + Python 3.14，2026-09-16）：脚本行为自测通过（`cache 90%`）；真机负载下全程 **26–31 ms**（spawn→出结果，6 次取样，预算 300ms），真实余额渲染正常（`bal ¥33.06`）；**footer 那一行没在 TUI 里肉眼复核**（只验到脚本层）。桥的存活由 systemd `Restart=always` 兜（`kill -9` 后几秒自动拉起），用不上 Windows 那条探活自愈。
 - Windows 实测（kimi-code 0.43.1 + Store 版 Python 3.13，2026-09-16）：脚本输出正确（`cache 95%`、余额走 DeepSeek `/user/balance` 拿到 ¥39.25），后台刷新子进程正常；耗时直连 200ms → 惰性导入后 **113ms**，经 `cmd.exe` 244ms → **156ms**。
-- **Windows footer 渲染（2026-09-16 截屏复核，同一台）**：footer 第一行确实渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新——这条以前写的是"没在这一台复核"，现在补上了。链路构成（本机实测）：`cmd.exe /d /s /c` + Store 版 Python 启动 ≈165ms，脚本自身 ≈40ms（import 12.5 + `load_config` 14.6 + usage 扫描 6.3 + 组行 3~10），合计 ~200ms，300ms 预算只剩三成余量。
+- **Windows footer 渲染（2026-09-16 截屏复核，同一台）**：footer 第一行确实渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新——这条以前写的是"没在这一台复核"，现在补上了。链路构成（本机实测）：`cmd.exe /d /s /c` + Store 版 Python 启动常态 ≈115ms、机器忙时能顶到 ≈165ms，脚本自身 ≈40ms（import 12.5 + `load_config` 14.6 + usage 扫描 6.3 + 组行 3~10）——常态合计 ≈156ms（与上面那条对得上），忙时逼近 200ms、300ms 预算只剩三成余量。
 - **超时是静默的，且跟机器忙不忙强相关**：runner 的 300ms 从 spawn 起算，超时就 `taskkill /T /F` 丢掉这次结果、回落内置布局，下一次成功再切回来——所以"footer 一直没出现 `cache N%`"时要先看当时机器是不是在跑重活（大量并行子进程会把 165ms 的启动开销顶过 300ms），别只怀疑脚本。想确认 TUI 到底有没有在调，可以在命令外面套一层探针脚本记录调用时刻（**实测 1 次/秒**）；runner 会给子进程注入 `KIMI_CODE_STATUS_LINE=1`，用它区分"runner 在调"和"别的东西在调"。
 - **Windows 附加职责：顺手给 exa-bridge 兜底（2026-09-16 加的，已实测自愈）**。桥被杀过两次（见 `references/web-tools-exa.md` 2.5），而启动文件夹的自启不会拉活（macOS 的 launchd / Linux 的 systemd 都会），所以让这条一秒一次的命令顺手探活：只做 TCP `connect`（**不发请求、不读响应**），30 秒最多一次；拒连就 `Popen` 拉起 `exa-bridge/launch.pyw`（实测 34ms；退路才是跑启动文件夹快捷方式，ShellExecute 要 ~240ms），冷却 60 秒，且**先落盘再拉起**（拉起可能被 runner 的 300ms 超时打断，冷却写不进去就会变成每秒重试）。**门闩是 `KIMI_CODE_STATUS_LINE=1`**——只有 runner 调用时才生效，`verify.py` 的行为自测、手工调试都不会误拉起（已用隔离测试验过门闩/节流/冷却/落盘四件事）。开销：桥在跑时每次调用多 ~1ms；桥挂着时多 ~50ms（本机连本机拒连端口实测是 `TimeoutError` 而不是 refused），都远在 300ms 预算内。边界：**只在 kimi 会话活着时有效**——关掉 kimi 就没有守护，而那正是搜索用不上的时候。
 

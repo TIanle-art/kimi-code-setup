@@ -1,13 +1,13 @@
-# kimi-code exa-bridge —— Linux systemd 用户单元模板（未实测，按标准做法写的）
+# kimi-code exa-bridge —— Linux systemd 用户单元模板（2026-09-16 在 WSL2 + kimi-code 0.41.0 实测通过）
 #
-# 占位符替换（和 launchagent.plist.template 同一套 __名字__）：
-#   D=$HOME/.kimi-code/exa-bridge
-#   sed -e "s|__PYTHON__|$(command -v python3)|" -e "s|__SCRIPT__|$D/exa-bridge.py|" \
-#       -e "s|__LOG__|$D/bridge.log|" -e "s|__PORT__|8787|" \
-#       -e "s|__EXA_API_KEY__|<Exa key>|" -e "s|__EXA_BRIDGE_TOKEN__|<本地令牌>|" \
-#       systemd-user.service.template > ~/.config/systemd/user/ai.kimi.exa-bridge.service
-#   chmod 600 ~/.config/systemd/user/ai.kimi.exa-bridge.service      # 里面写着 Exa key
-#   systemctl --user daemon-reload && systemctl --user enable --now ai.kimi.exa-bridge
+# 占位符：双下划线包住的名字，共 6 个——PYTHON / SCRIPT / LOG / PORT / EXA_API_KEY / EXA_BRIDGE_TOKEN
+#   PYTHON：python3 的绝对路径（渲染时拿 `command -v python3` 的结果；systemd 不继承 PATH，
+#           所以嵌进去的是渲染那一刻解析到的那个——本机两次渲染就分别得到过 /usr/bin/python3
+#           和 brew 的 python3，两个都能跑，想固定就显式写绝对路径）
+#   SCRIPT / LOG：绝对路径；PORT 默认 8787；EXA_BRIDGE_TOKEN 与 config.toml 两处 api_key 一致
+# 完整的替换命令、chmod 600、daemon-reload / enable 步骤见 references/web-tools-exa.md「Linux」一节。
+# （这段注释刻意不写完整的占位符记号：那条 sed 管道会把注释里的记号一并替换，
+#   生成出来的注释会变成一堆真实路径和密钥。）
 
 [Unit]
 Description=kimi-code exa-bridge（WebSearch / FetchURL 的内置适配器）

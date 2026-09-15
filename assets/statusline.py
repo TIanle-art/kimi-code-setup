@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""kimi-code 自定义状态栏：整个会话的缓存命中率 + 当前 provider 的 API 余额。
+"""kimi-code 自定义状态栏：权限模式、上下文量、缓存命中率和 API 余额。
 
 由 ~/.kimi-code/tui.toml 的 [status_line] command 调用。kimi-code 通过 stdin
 传入 JSON 快照（model / cwd / gitBranch / permissionMode / planMode / sessionId
@@ -348,6 +348,23 @@ def mode_badge(payload):
     return " ".join(parts)
 
 
+def context_segment(payload):
+    """优先用 token 数计算比例，避免快照里的 contextUsage 与数字不一致。"""
+    used = payload.get("contextTokens")
+    maximum = payload.get("maxContextTokens")
+    if (isinstance(used, (int, float)) and not isinstance(used, bool)
+            and isinstance(maximum, (int, float)) and not isinstance(maximum, bool)
+            and used >= 0 and maximum > 0):
+        percentage = round(100 * used / maximum)
+        return "%s %s %s" % (
+            dim("context"), bold("%d%%" % percentage),
+            dim("(%s/%s)" % (format_tokens(used), format_tokens(maximum))))
+    ratio = payload.get("contextUsage")
+    if isinstance(ratio, (int, float)) and not isinstance(ratio, bool) and 0 <= ratio <= 1:
+        return "%s %s" % (dim("context"), bold("%d%%" % round(100 * ratio)))
+    return None
+
+
 def usage_totals(totals):
     if not totals:
         return None
@@ -404,6 +421,9 @@ def build_line(payload):
     badge = mode_badge(payload)
     if badge:
         parts.append(badge)
+    segment = context_segment(payload)
+    if segment:
+        parts.append(segment)
     if payload.get("model"):
         parts.append(payload["model"])
     totals = session_usage(payload.get("sessionId"))

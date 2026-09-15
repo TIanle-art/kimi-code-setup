@@ -172,7 +172,7 @@ $sc.Save()
 
 **2.5 桥没在跑（重启后没起来 / 中途被杀，2026-09-16 两次实测）**：① **重启后没起来**——01:07 重启、01:08 登录，之后桥没有自己起来（`/health` 连接被拒、`bridge.log` 里没有新横幅），而 Windows「设置 → 应用 → 启动」里那条 `pythonw.exe`（就是本快捷方式）**显示为「开」**；同一次登录里 OneDrive、TranslucentTB 等**用户级**自启项同样"标记为开却没在跑"（服务级的火绒 / RtkAudUService 正常）。② **没重启也会挂**——同一天 02:01 又发现桥没了，`bridge.log` 里**只有请求行、没有任何 traceback**，说明它是**被杀**而不是自己崩（火绒是头号嫌疑，未坐实）；那次同样是"手动跑一次快捷方式"救活。**快捷方式本身两次都是好的**：跑一次那个 `.lnk`，桥立刻 `listening`。另外注意：桥的进程名是 **`pythonw3.13`**（Store 版 Python 的真名），`Get-Process pythonw` 查不到它，别据此判定"桥没在跑"——**判断存活只认 `/health`，别依赖日志**。**兜底（2026-09-16 加，已实测自愈）**：状态栏脚本（每秒被 runner 调一次）现在顺手探活——只做 TCP `connect`、30 秒最多一次，拒连就 `Popen` 拉起 `exa-bridge/launch.pyw`，冷却 60 秒；门闩是 `KIMI_CODE_STATUS_LINE=1`，只有 runner 调用时才生效（手动跑 / `verify.py` 自测都不会误拉起）。实测：杀掉桥后 **2 秒内自动回来**。边界：**只在 kimi 会话活着时有效**（关掉 kimi 就没守护，而那正是用不上搜索的时候）。实现细节见 `references/statusline.md` 已知边界。
 
-处理顺序：① `verify.py` 或 `curl /health` 确认桥不在；② **先等 5~10 秒**——上面的兜底一般已经把它拉起来了（`statusline/bridge-watch.json` 里能看到 `last_ok`/`relaunched`）；③ 还没起来就跑一次快捷方式；④ 只有重现失败才去查配置。
+处理顺序：① `verify.py` 或 `curl /health` 确认桥不在；② **先等最多 30 秒**——兜底探活最多 30 秒跑一次，撞上就会把它拉起来（`statusline/bridge-watch.json` 里能看到 `last_ok`/`relaunched`）；③ 还没起来就跑一次快捷方式；④ 只有重现失败才去查配置。
 
 **火绒这条线索（2026-09-16 翻过日志）**：把火绒的「安全日志」按当天翻了一遍——只有 5 条，全是它自己的动作（01:41:55 升级到 6.0.11.3、01:42 系统修复/漏洞修复、**01:58:06 手动清理 1.2GB 垃圾**），**没有任何"拦截 / 结束进程"记录**；而桥被发现死亡是 02:01，紧跟在 01:58 那次清理之后——"升级或垃圾清理顺带把它带走了"仍是最像的解释，但**没坐实**。已把 `%USERPROFILE%\.kimi-code\exa-bridge` 加进火绒信任区（类型：文件夹及子目录，用 computer-use 工具点界面加的）。**别把信任区当护身符**：它只让病毒扫描跳过这个目录，不等于放行进程行为；下次再被杀，先打开火绒「安全日志」按时间点对一遍（没有条目就说明不是它的主动拦截，往别处查）。
 
@@ -199,6 +199,7 @@ systemctl --user status ai.kimi.exa-bridge --no-pager | head -15
 loginctl enable-linger "$USER"    # 关键：纯 SSH / 不登录图形会话时也让服务常驻（WSL2 免提权通过；要授权时会弹 polkit）
 ```
 
+- **WSL2 前置**：`systemctl --user` 要先有 systemd——`/etc/wsl.conf` 里写 `[boot]` 段加 `systemd=true`，再 `wsl --shutdown` 重进；否则第一条 `systemctl --user daemon-reload` 就会报 “System has not been booted with systemd as init system”。
 - **同一条本地令牌写两处**：`config.toml` 的 `[services.*].api_key`（走 `patch-config.py set`）与 unit 里的 `EXA_BRIDGE_TOKEN`。两边不一致就是"直打桥 401"；`verify.py` 的「常驻定义令牌」一项直接比对这两处——**令牌尾部多了个 `\r` 也认得出来**（就是上面那个 CRLF 坑的症状）。
 - 改了 **unit** 要 `systemctl --user daemon-reload` 再 `restart`；只改**脚本**直接 `systemctl --user restart ai.kimi.exa-bridge`。
 - 日志：unit 里把 stdout/stderr 写进了 `bridge.log`；systemd 自己的记录用 `journalctl --user -u ai.kimi.exa-bridge -n 50 --no-pager`。

@@ -358,8 +358,8 @@ class Handler(BaseHTTPRequestHandler):
         # Read the body before anything else: an undrained body would be parsed
         # as the next request line on this keep-alive connection.
         if self.headers.get("Transfer-Encoding"):
-            # 不解析 chunked：读不干净就会污染 keep-alive（README 里那条 400 的成因），
-            # 直接关连接比半读安全。
+            # 不解析 chunked：读不干净就会污染 keep-alive（references/web-tools-exa.md 排错表里
+            # 「401 之后的请求莫名 400 Bad request syntax」那条的成因），直接关连接比半读安全。
             self.close_connection = True
         try:
             length = int(self.headers.get("Content-Length") or 0)
