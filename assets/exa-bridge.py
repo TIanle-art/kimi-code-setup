@@ -390,9 +390,47 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "not found"})
 
 
+def log_line(message: str) -> None:
+    """一行中文说明同时送 stderr 与 bridge.log：pythonw 没有控制台，只有日志文件留得下现场。"""
+    sys.stderr.write(message)
+    try:
+        log = os.path.join(KIMI_HOME, "exa-bridge", "bridge.log")
+        try:
+            # 启动器（launch.pyw 直接赋值 / launchd、systemd 的 fd 重定向）已经把 stderr 接到
+            # 这个文件了，比 inode 而不是比路径，别把同一行写两遍
+            same = os.path.samestat(os.fstat(sys.stderr.fileno()), os.stat(log))
+        except Exception:
+            same = False
+        if not same:
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(message)
+    except Exception:
+        pass
+
+
+def bridge_already_running() -> bool:
+    """启动前探一次 /health：能拿回我们自己的 JSON（"ok": true）说明桥已经在跑了。
+
+    Windows 上不能指望"绑定冲突"来发现：stdlib 的 HTTPServer.allow_reuse_address = 1，
+    而 SO_REUSEADDR 在 Windows 的语义允许第二个进程绑同一端口——两个桥并存、抢请求、
+    日志两份（实测）。allow_reuse_address 也不能改成 0：重启后 TIME_WAIT 会让绑定失败。
+    """
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))    # 本机探测不走代理
+        with opener.open(f"http://127.0.0.1:{PORT}/health", timeout=1) as response:
+            info = json.loads(response.read().decode("utf-8", "replace"))
+        return isinstance(info, dict) and info.get("ok") is True
+    except Exception:
+        return False
+
+
 def main():
     if not api_key():
         sys.stderr.write("exa-bridge: no Exa API key (set EXA_API_KEY or mcp.json header)\n")
+    if bridge_already_running():
+        log_line(f"exa-bridge: 端口 {PORT} 上已经有一个桥在跑（/health 返回 ok）——本次不再启动"
+                 f"第二个，直接退出；要重启先把原来那个停掉（macOS: launchctl kickstart -k）\n")
+        sys.exit(0)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     sys.stderr.write(f"exa-bridge listening on http://127.0.0.1:{PORT} (results={NUM_RESULTS})\n")
     server.serve_forever()

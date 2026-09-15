@@ -198,16 +198,28 @@ def check_services(cfg):
     fetch = services.get("moonshot_fetch") or {}
     base_url = search.get("base_url") or ""
     token = search.get("api_key") or ""
+    fetch_base = fetch.get("base_url") or ""
+    fetch_token = fetch.get("api_key") or ""
     if not search:
         add("WARN", "services.moonshot_search 缺失 —— 内置 WebSearch 会走 Kimi 托管服务（需 /login）")
-        return "", ""
+        return "", "", []
     add("PASS", "services.moonshot_search：%s（令牌 %s）" % (base_url, mask(token)))
-    add("PASS" if fetch else "WARN",
-        "services.moonshot_fetch：%s" % (fetch.get("base_url") or "缺失"))
+    add("PASS" if fetch else "WARN", "services.moonshot_fetch：%s" % (fetch_base or "缺失"))
     if not is_local_endpoint(base_url):
         add("WARN", "内置联网工具的端点不是本机 exa-bridge（当前 %s）—— 跳过桥检查；"
                     "若确为自建远端桥，请用 curl 单独验证" % base_url)
-    return base_url, token
+        return base_url, token, []
+    # FetchURL 走的是另一个入口 [services.moonshot_fetch]：令牌漏写 / 写成另一把时 FetchURL 直打桥
+    # 401，而 WebSearch 一切正常。两处都指向本机桥时才比（远端自建桥的令牌不归这里管）。
+    local_tokens = [("moonshot_search", token)]
+    if fetch and is_local_endpoint(fetch_base):
+        local_tokens.append(("moonshot_fetch", fetch_token))
+        if fetch_token == token:
+            add("PASS", "两处 services.*.api_key 一致（%s）" % mask(token))
+        else:
+            add("FAIL", "两处 services.*.api_key 不一致（search %s / fetch %s）—— 它们该是同一把 "
+                        "EXA_BRIDGE_TOKEN，不然 FetchURL 直打桥会 401" % (mask(token), mask(fetch_token)))
+    return base_url, token, local_tokens
 
 
 def check_bridge(base_url, token):
@@ -267,6 +279,17 @@ def check_bridge(base_url, token):
                     "网络恢复后再跑一次本脚本就知道桥是否无辜" % status)
     else:
         add("FAIL", "直打桥搜索 → HTTP %s：%s" % (status, body[:200]))
+    # /fetch 是另一条通道（内置 FetchURL）：桥的设计是"抓取失败也回 200、原因写进正文"
+    # （见 assets/exa-bridge.py 的 handle_fetch），所以光看 200 不够——正文以 [exa-bridge] 开头就是失败。
+    status, body = http_post_json("%s/fetch" % root, {"url": "https://example.com"},
+                                  token=token, timeout=45)
+    if status == 200 and not body.startswith("[exa-bridge]"):
+        add("PASS", "直打桥抓取 → 200（正文正常）")
+    elif not NET_UP:
+        add("WARN", "直打桥抓取失败（HTTP %s），但当前出网不通 —— 先按网络问题处理，"
+                    "网络恢复后再跑一次本脚本就知道桥是否无辜" % status)
+    else:
+        add("FAIL", "直打桥抓取 → HTTP %s：%s" % (status, body[:80]))
 
 
 LAUNCH_DEF_TOKEN_PATTERNS = (
@@ -284,9 +307,10 @@ def native_launch_def(home):
     return "Linux systemd", Path.home() / ".config" / "systemd" / "user" / "ai.kimi.exa-bridge.service"
 
 
-def check_launch_def(home, token):
-    """桥实际用的令牌写在常驻定义里，必须与 config.toml 的 api_key 对得上。
+def check_launch_def(home, tokens):
+    """桥实际用的令牌写在常驻定义里，必须与 config.toml 里各处 services.*.api_key 都对得上。
 
+    tokens 只放指向本机桥的服务：[(来源, api_key), …]——WebSearch 与 FetchURL 各一处。
     这条一直没人查，而它有个很隐蔽的坏法（实测 2026-09-16，Linux/WSL2）：模板是 CRLF 时
     sed 出来的定义每行结尾多一个 \\r，令牌被带上回车——与 config.toml 里的值对不上，
     直打桥 401，而 /health 一切正常，很难往行尾符上想。
@@ -312,22 +336,25 @@ def check_launch_def(home, token):
         add("INFO", "%s：定义里读不到 EXA_BRIDGE_TOKEN（桥不校验令牌，或写法变了）" % label)
         return
     if live != live.strip():
-        add("FAIL", "%s：令牌首尾有多余空白（长度 %d，config.toml 里是 %d）——两边必然对不上"
-            % (label, len(live), len(token) if token else 0))
+        add("FAIL", "%s：令牌首尾有多余空白（长度 %d，config.toml 里是 %s）——两边必然对不上"
+            % (label, len(live), "、".join(str(len(t)) for _, t in tokens)))
         return                      # 别再往下说"一致"：尾部带 \r 就是坏的，哪怕 strip 后相等
     if not live:
         add("INFO", "%s：令牌留空 = 桥不校验（config.toml 里写不写都行）" % label)
-    elif not token:
+    elif not any(t for _, t in tokens):
         add("INFO", "%s：定义里有令牌，但 config.toml 的 services.*.api_key 是空的" % label)
-    elif live == token:
+    elif all(t == live for _, t in tokens):
         add("PASS", "常驻定义令牌：%s 与 config.toml 一致（%s）" % (label, mask(live)))
     else:
         add("FAIL", "常驻定义令牌：%s 与 config.toml 的 api_key 不一致（定义 %s / 配置 %s）—— "
-                    "直打桥会 401；改哪边都行，改完重启桥" % (label, mask(live), mask(token)))
+                    "直打桥会 401；改哪边都行，改完重启桥"
+            % (label, mask(live),
+               "、".join("%s %s" % (name, mask(t)) for name, t in tokens if t != live)))
 
 
 def launch_def_behaves():
-    """验证「常驻定义令牌」这条检查自己的解析：一致→PASS、尾部 \\r→FAIL、值不同→FAIL。
+    """验证「常驻定义令牌」这条检查自己的解析：一致→PASS、尾部 \\r→FAIL、值不同→FAIL、
+    两处 services 都对得上→PASS、有一处对不上→FAIL。
 
     用临时文件 + 临时替换 native_launch_def 跑，不碰真实机器、也不把探针输出打进结果。
     """
@@ -340,22 +367,25 @@ def launch_def_behaves():
     try:
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "ai.kimi.exa-bridge.service"
-            for text, token, want in (("Environment=EXA_BRIDGE_TOKEN=abc\n", "abc", "PASS"),
-                                      ("Environment=EXA_BRIDGE_TOKEN=abc\r\n", "abc", "FAIL"),
-                                      ("Environment=EXA_BRIDGE_TOKEN=abc\n", "xyz", "FAIL")):
+            for text, tokens, want in (
+                    ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "abc")], "PASS"),
+                    ("Environment=EXA_BRIDGE_TOKEN=abc\r\n", [("search", "abc")], "FAIL"),
+                    ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "xyz")], "FAIL"),
+                    ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "abc"), ("fetch", "abc")], "PASS"),
+                    ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "abc"), ("fetch", "xyz")], "FAIL")):
                 probe.write_bytes(text.encode())
                 RESULTS.clear()
                 globals()["native_launch_def"] = lambda home, _p=probe: ("probe", _p)
                 with contextlib.redirect_stdout(io.StringIO()):
-                    check_launch_def(Path("."), token)
+                    check_launch_def(Path("."), tokens)
                 levels.append(RESULTS[-1][0] if RESULTS else "（无输出）")
     finally:
         RESULTS[:] = saved_results
         globals()["native_launch_def"] = saved_native
-    want_levels = ["PASS", "FAIL", "FAIL"]
+    want_levels = ["PASS", "FAIL", "FAIL", "PASS", "FAIL"]
     if levels != want_levels:
         return False, "期望 %s，实际 %s" % (want_levels, levels)
-    return True, "一致→PASS、尾部 \\r→FAIL、值不同→FAIL"
+    return True, "一致→PASS、尾部 \\r→FAIL、值不同→FAIL、两处都一致→PASS、两处有一处不一致→FAIL"
 
 
 def check_launch_def_selftest():
@@ -543,7 +573,8 @@ def hook_blocks_correctly(script):
             env = dict(os.environ, KIMI_CODE_HOME=str(probe_home))
             proc = subprocess.run([sys.executable, str(script)],
                                   input=json.dumps({"session_id": session}),
-                                  capture_output=True, text=True, timeout=15, env=env)
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=15, env=env)
             return proc.returncode
 
         def begin(turn):
@@ -604,7 +635,8 @@ def statusline_behaves(script):
         payload = json.dumps({"model": "Probe Model", "cwd": "/tmp", "permissionMode": "yolo",
                               "planMode": False, "sessionId": "session_probe"})
         proc = subprocess.run([sys.executable, str(script)], input=payload, capture_output=True,
-                              text=True, timeout=15, env=dict(os.environ, KIMI_CODE_HOME=str(probe_home)))
+                              text=True, encoding="utf-8", errors="replace", timeout=15,
+                              env=dict(os.environ, KIMI_CODE_HOME=str(probe_home)))
     plain = re.sub(r"\x1b\[[0-9;]*m", "", proc.stdout or "")
     first = plain.strip().splitlines()[0] if plain.strip() else ""
     if proc.returncode == 0 and "cache 90%" in plain:
@@ -650,7 +682,8 @@ def check_doctor():
     if not exe:
         return
     try:
-        proc = subprocess.run([exe, "doctor"], capture_output=True, text=True, timeout=40)
+        proc = subprocess.run([exe, "doctor"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=40)
     except Exception as exc:
         add("WARN", "kimi doctor：跑不起来 %s" % exc)
         return
@@ -661,16 +694,20 @@ def check_doctor():
 
 
 def patch_script_behaves(script):
-    """临时文件上验证 patch-config：set 新增/改值、ensure-hook 幂等、unset 删键与清空表头。"""
+    """临时文件上验证 patch-config：set 新增/改值、带引号表名命中、ensure-hook 幂等、unset 删键与清空表头。"""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         cfg = Path(tmp) / "config.toml"
         cfg.write_text('[services.moonshot_search]\nbase_url = "http://127.0.0.1:8787/search"\n',
                        encoding="utf-8")
 
+        def run_on(path, *args):
+            return subprocess.run([sys.executable, str(script), "--file", str(path), *args],
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=15)
+
         def run(*args):
-            return subprocess.run([sys.executable, str(script), "--file", str(cfg), *args],
-                                  capture_output=True, text=True, timeout=15)
+            return run_on(cfg, *args)
 
         results = {}
         results["set 新增"] = run("set", "services.moonshot_search.api_key", "abc").returncode == 0 \
@@ -688,10 +725,18 @@ def patch_script_behaves(script):
             and "api_key" not in cfg.read_text(encoding="utf-8")
         results["unset 清空表头"] = run("unset", "services.moonshot_search.base_url").returncode == 0 \
             and "[services.moonshot_search]" not in cfg.read_text(encoding="utf-8")
+        # 带引号的表名：文档教人用不带引号的点分键写模型级字段（SKILL.md 第 1/2 步），必须命中
+        # 已有的 [models."a/b".overrides]，而不是新开一张表（那会产出非法 TOML，只在复验时报错）
+        quoted = Path(tmp) / "quoted.toml"
+        quoted.write_text('[models."a/b".overrides]\nmodel = "deepseek-flash"\n', encoding="utf-8")
+        proc = run_on(quoted, "set", "models.a/b.overrides.default_effort", "high")
+        after = quoted.read_text(encoding="utf-8")
+        results["带引号表名命中"] = (proc.returncode == 0 and after.count("[models") == 1
+                                 and after.find('default_effort = "high"') > after.find("[models"))
         bad = [name for name, ok in results.items() if not ok]
     if bad:
         return False, "失败步骤：%s" % "、".join(bad)
-    return True, "set 新增/改值、拒绝控制字符、ensure-hook 幂等、unset 删键与清空表头 全过"
+    return True, "set 新增/改值、带引号表名命中、拒绝控制字符、ensure-hook 幂等、unset 删键与清空表头 全过"
 
 
 def check_patch_script(skill_dir):
@@ -760,7 +805,8 @@ def run_e2e(prompt, timeout):
     log = home_dir() / "exa-bridge" / "bridge.log"
     before = log.stat().st_size if log.exists() else 0
     try:
-        proc = subprocess.run([exe, "-p", prompt], capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run([exe, "-p", prompt], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         add("FAIL", "端到端：超时")
         return
@@ -775,6 +821,12 @@ def run_e2e(prompt, timeout):
 
 
 def main():
+    # Windows 上输出被管道/文件接走时 stdout 会跟 ANSI 代码页走（cp936 编不出 ✗）——失败清单
+    # 打印到一半就 UnicodeEncodeError 崩掉，退出码从 2 变 1，反而看不出是哪项挂了。钉死 UTF-8。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="kimi-code 落地体检（只读）")
     ap.add_argument("--skill-dir", default=str(Path(__file__).resolve().parent.parent),
                     help="skill 目录，用于比对 assets/exa-bridge.py（默认取本脚本的上级目录）")
@@ -788,7 +840,8 @@ def main():
     exe = shutil.which("kimi")
     if exe:
         try:
-            ver = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=20)
+            ver = subprocess.run([exe, "--version"], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=20)
             add("PASS", "CLI：%s" % (ver.stdout.strip() or ver.stderr.strip() or "（无输出）"))
         except Exception as exc:
             add("WARN", "CLI：版本查询失败 %s" % exc)
@@ -800,10 +853,10 @@ def main():
         check_network()
     cfg = check_config(home)
     if cfg:
-        base_url, token = check_services(cfg)
+        base_url, token, local_tokens = check_services(cfg)
         if base_url and is_local_endpoint(base_url):
             check_bridge(base_url, token)
-            check_launch_def(home, token)
+            check_launch_def(home, local_tokens)
     check_mcp(home)
     check_tools(home)
     check_hooks(home, cfg)

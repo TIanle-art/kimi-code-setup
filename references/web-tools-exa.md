@@ -2,7 +2,7 @@
 
 > 主流程第 2 步的细则。目标：kimi-code 的 `WebSearch` / `FetchURL` 不再走 Kimi 托管服务，而是记在**你自己的 exa.ai 额度**上，工具名不变。
 >
-> 下文 **`$SKILL_DIR`** = 这个 skill 所在目录（本机有正本 `~/Desktop/kimi-code-setup` 与安装副本 `~/.kimi-code/skills/kimi-code-setup`，内容一致、用哪份都行；在目标机器上是 `~/.kimi-code/skills/kimi-code-setup`，Windows `%USERPROFILE%\.kimi-code\skills\kimi-code-setup`）。
+> 下文 **`$SKILL_DIR`** = 这个 skill 所在目录（macOS 正本 `~/Desktop/kimi-code-setup`、WSL2 正本 `~/projects/kimi-code-setup`，安装副本都是 `~/.kimi-code/skills/kimi-code-setup`，内容一致、用哪份都行；在目标机器上是 `~/.kimi-code/skills/kimi-code-setup`，Windows `%USERPROFILE%\.kimi-code\skills\kimi-code-setup`）。
 
 ## 为什么不直连
 
@@ -49,10 +49,13 @@ kimi-code 侧读取优先级：环境变量 `KIMI_WEB_SEARCH_BASE_URL` / `KIMI_W
 | 端口 | 默认 `8787`，被占用就换（`EXA_BRIDGE_PORT`） |
 | Python | ≥ 3.9，纯标准库。macOS `command -v python3`；Windows `where pythonw` |
 
-**没有 Exa key 就别往下做这一节**：桥调 `api.exa.ai` 必须要 key，否则调不通。两条退路——
+**没有 Exa key 就别往下做这一节**：桥调 `api.exa.ai` 必须要 key，否则调不通。三条退路，按用户情况挑（这是 `SKILL.md` 第 0 步「用户说"我没有 Exa key"时给他三条路挑」那张小表的细则版；**key 别回显在回复正文里**）：
 
-1. **去注册**（推荐）：dashboard.exa.ai 注册即得 key，新账号送 $20（约 2,800 次搜索），之后 Free Tier 每月再送 $10；拿到 key 再回来做这一节。
-2. **先不建桥，只挂匿名 MCP**：`mcp.json` 里只写 `{"url": "https://mcp.exa.ai/mcp"}`、**不要 `headers`**——实测（2026-09）不带任何 key 也能搜索、也能抓取。代价：内置 `WebSearch` / `FetchURL` 用不了（它们会回落到需要 `/login` 的 Kimi 托管服务），联网只能走 MCP 工具。
+1. **去注册**（推荐）：dashboard.exa.ai 注册即得 key——**2026-09 时**新账号送 $20（约 2,800 次搜索），之后 Free Tier 每月再送 $10（营销数字会变，以 dashboard 为准）；两条通道都能建（内置 + MCP），花的也是他自己的额度。拿到 key 再回来做这一节。
+2. **先不建桥，只挂匿名 MCP**：`mcp.json` 里只写 `{"url": "https://mcp.exa.ai/mcp"}`、**不要 `headers`**——实测（2026-09）不带任何 key 也能 `web_search_exa` / `web_fetch_exa`。代价：只有 MCP 通道可用（额度与速率由 Exa 服务端限制，上限未测）；内置 `WebSearch` / `FetchURL` 用不了（它们会回落到需要 `/login` 的 Kimi 托管服务），联网只能走 MCP 工具。**选了 ② 之后想升级**：注册拿 key → 填 plist 的 `EXA_API_KEY`（或 `mcp.json` 的 `x-api-key`）→ 按第 1~3 节建桥 → 重启。
+3. **干脆不要 Exa**：自建 SearXNG 后把 `[services.moonshot_search].base_url` 指过去；或退回"用 Bash curl 抓指定页面"——没有搜索能力，只有抓取。
+
+非交互场景（`kimi -p "调试 kimi-code"`）没有提问通道：要在提示词里一次把平台、key、要不要 MCP 说全，或让用户改用交互会话。
 
 ## 1. 放脚本
 
@@ -170,7 +173,7 @@ $sc.Save()
 
 **2. 判据（三条路相同）**：`curl.exe -s http://127.0.0.1:8787/health` 返回 `"ok":true` 且 `"key":true`；`$dst\bridge.log` 里出现 `exa-bridge listening on ...`。写完自启项**立刻回读一次**，别只信命令回显的"成功"——`Get-ScheduledTaskInfo -TaskName kimi-exa-bridge` / `reg query "HKCU\..." /v kimi-exa-bridge` / `Get-ChildItem ([Environment]::GetFolderPath('Startup'))`。
 
-**2.5 桥没在跑（重启后没起来 / 中途被杀，2026-09-16 两次实测）**：① **重启后没起来**——01:07 重启、01:08 登录，之后桥没有自己起来（`/health` 连接被拒、`bridge.log` 里没有新横幅），而 Windows「设置 → 应用 → 启动」里那条 `pythonw.exe`（就是本快捷方式）**显示为「开」**；同一次登录里 OneDrive、TranslucentTB 等**用户级**自启项同样"标记为开却没在跑"（服务级的火绒 / RtkAudUService 正常）。② **没重启也会挂**——同一天 02:01 又发现桥没了，`bridge.log` 里**只有请求行、没有任何 traceback**，说明它是**被杀**而不是自己崩（火绒是头号嫌疑，未坐实）；那次同样是"手动跑一次快捷方式"救活。**快捷方式本身两次都是好的**：跑一次那个 `.lnk`，桥立刻 `listening`。另外注意：桥的进程名是 **`pythonw3.13`**（Store 版 Python 的真名），`Get-Process pythonw` 查不到它，别据此判定"桥没在跑"——**判断存活只认 `/health`，别依赖日志**。**兜底（2026-09-16 加，已实测自愈）**：状态栏脚本（每秒被 runner 调一次）现在顺手探活——只做 TCP `connect`、30 秒最多一次，拒连就 `Popen` 拉起 `exa-bridge/launch.pyw`，冷却 60 秒；门闩是 `KIMI_CODE_STATUS_LINE=1`，只有 runner 调用时才生效（手动跑 / `verify.py` 自测都不会误拉起）。实测：杀掉桥后 **2 秒内自动回来**。边界：**只在 kimi 会话活着时有效**（关掉 kimi 就没守护，而那正是用不上搜索的时候）。实现细节见 `references/statusline.md` 已知边界。
+**2.5 桥没在跑（重启后没起来 / 中途被杀，2026-09-16 两次实测）**：① **重启后没起来**——01:07 重启、01:08 登录，之后桥没有自己起来（`/health` 连接被拒、`bridge.log` 里没有新横幅），而 Windows「设置 → 应用 → 启动」里那条 `pythonw.exe`（就是本快捷方式）**显示为「开」**；同一次登录里 OneDrive、TranslucentTB 等**用户级**自启项同样"标记为开却没在跑"（服务级的火绒 / RtkAudUService 正常）。② **没重启也会挂**——同一天 02:01 又发现桥没了，`bridge.log` 里**只有请求行、没有任何 traceback**，说明它是**被杀**而不是自己崩（火绒是头号嫌疑，未坐实）；那次同样是"手动跑一次快捷方式"救活。**快捷方式本身两次都是好的**：跑一次那个 `.lnk`，桥立刻 `listening`。另外注意：桥的进程名是 **`pythonw3.13`**（Store 版 Python 的真名），`Get-Process pythonw` 查不到它，别据此判定"桥没在跑"——**判断存活只认 `/health`，别依赖日志**。**兜底（2026-09-16 加，已实测自愈）**：状态栏脚本（每秒被 runner 调一次）现在顺手探活——只做 TCP `connect`、30 秒最多一次，拒连就拉起——**优先走启动文件夹快捷方式**（ShellExecute 由 explorer 起、不在我们的进程树里，runner 超时那记 `taskkill /T /F` 杀不到它），**没有快捷方式才回退直接 `Popen` `exa-bridge/launch.pyw`**；重试间隔 30 秒（与探活同频；原来是 60 秒冷却，被连坐时桥要多躺 30~90 秒）；门闩是 `KIMI_CODE_STATUS_LINE=1`，只有 runner 调用时才生效（手动跑 / `verify.py` 自测都不会误拉起）。实测：杀掉桥后 **2 秒内自动回来**。边界：**只在 kimi 会话活着时有效**（关掉 kimi 就没守护，而那正是用不上搜索的时候）。实现细节见 `references/statusline.md` 已知边界。
 
 处理顺序：① `verify.py` 或 `curl /health` 确认桥不在；② **先等最多 30 秒**——兜底探活最多 30 秒跑一次，撞上就会把它拉起来（`statusline/bridge-watch.json` 里能看到 `last_ok`/`relaunched`）；③ 还没起来就跑一次快捷方式；④ 只有重现失败才去查配置。
 
@@ -245,7 +248,7 @@ tail -3 ~/.kimi-code/exa-bridge/bridge.log     # 应有 POST /search 记录
 
 再核对工具清单（做法见 SKILL.md「总验收」）。
 
-**一条命令版**（推荐，只读）：`python3 "$SKILL_DIR/assets/verify.py"` —— 覆盖出网 / 配置 / 桥 / MCP / 工具清单 / CLI doctor / 补丁脚本自测 / 脚本漂移；加 `--e2e` 会再跑一次真实端到端。出网不通时它会把桥的失败降级成告警，先别冤枉桥；端点不是本机 exa-bridge（如 Kimi 托管）时会跳过桥检查，属正常。
+**一条命令版**（推荐，只读）：`python3 "$SKILL_DIR/assets/verify.py"`——**覆盖清单只维护在 `SKILL.md`「assets 里有什么」的 `verify.py` 一行**，这里不再重复枚举；加 `--e2e` 会再跑一次真实端到端。出网不通时它会把桥的失败降级成告警，先别冤枉桥；端点不是本机 exa-bridge（如 Kimi 托管）时会跳过桥检查，属正常。
 
 ## 5. 回滚
 

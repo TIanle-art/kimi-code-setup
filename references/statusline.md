@@ -30,7 +30,10 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
 ```bash
 python3 "$SKILL_DIR/assets/verify.py" | grep 状态栏     # 体检里的状态栏几项
 echo '{"model":"X","cwd":"'$HOME'","permissionMode":"yolo","sessionId":"session_x"}' \
-  | python3 ~/.kimi-code/statusline.py                   # 手工喂一份快照看输出
+  | python3 ~/.kimi-code/statusline.py                   # 手工喂一份快照看输出（macOS / Linux / Git Bash）
+
+# Windows（PowerShell：绝对路径 + python，`~` 不展开）：
+# '{"model":"X","cwd":"C:/Users/<你>","permissionMode":"yolo","sessionId":"session_x"}' | python C:/Users/<你>/.kimi-code/statusline.py
 ```
 
 `verify.py` 的「状态栏脚本行为」用临时 `KIMI_CODE_HOME` + 假会话日志（read 900 / uncached 100）跑一次，期望输出含 `cache 90%`（不联网）。

@@ -12,6 +12,9 @@ kimi-code 会丢弃整份配置并报 "No model configured. Run /login ..."，
       patch-config.py set services.moonshot_search.base_url http://127.0.0.1:8787/search
       patch-config.py set services.moonshot_search.api_key  <本地令牌>
       patch-config.py set thinking.effort max
+      patch-config.py set models."deepseek/deepseek-flash".overrides.default_effort max
+      # 表名里的引号可省（models."a/b".overrides 与 models.a/b.overrides 是同一张表）；
+      # 新建带 / 这类裸键不允许字符的表头时会自动补上引号
       patch-config.py set default_permission_mode yolo
   patch-config.py unset <点分键> [--keep-empty]
       # 删键；表被删空时默认连表头一起删，--keep-empty 则保留空表头
@@ -56,13 +59,66 @@ def table_name(raw_header: str) -> str:
     return inner.strip()
 
 
+def split_table(name: str) -> list:
+    """按点切分表名，但引号里的点不算分隔符：models."a/b".overrides → 3 段（引号保留）。"""
+    parts, buf, quote, escaped = [], "", "", False
+    for ch in name:
+        if escaped:
+            buf, escaped = buf + ch, False
+        elif quote:
+            buf += ch
+            if ch == "\\" and quote == '"':
+                escaped = True
+            elif ch == quote:
+                quote = ""
+        elif ch in "\"'":
+            buf, quote = buf + ch, ch
+        elif ch == ".":
+            parts.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    parts.append(buf)
+    return parts
+
+
+def bare_segment(part: str) -> str:
+    """去掉一段外侧的引号（用户可能把引号一起写进了点分键）。"""
+    s = part.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
+    return s
+
+
+def normalize_table(name: str) -> str:
+    """比对用的归一形式：逐段去引号，让 models."a/b".overrides 与 models.a/b.overrides 相等。"""
+    return ".".join(bare_segment(part) for part in split_table(name))
+
+
+BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def render_table(name: str) -> str:
+    """把表名渲染成合法 TOML 表头：不是裸键的分段补双引号（如含 / 的模型别名）。
+
+    不带引号的 models.a/b.overrides 原样拼进文件就是非法 TOML，复验才报 SyntaxError，
+    用户看不出真因；这里统一渲染成 models."a/b".overrides。
+    """
+    out = []
+    for part in split_table(name):
+        seg = bare_segment(part)
+        out.append(seg if BARE_KEY_RE.match(seg) else format_value(seg))
+    return ".".join(out)
+
+
 def scan_headers(lines):
     out = []
     for i, line in enumerate(lines):
         m = HEADER_RE.match(line)
         if m:
             raw = m.group(1)
-            out.append({"i": i, "raw": raw, "name": table_name(raw),
+            name = table_name(raw)
+            out.append({"i": i, "raw": raw, "name": name, "norm": normalize_table(name),
                         "array": raw.startswith("[[")})
     return out
 
@@ -75,8 +131,9 @@ def table_span(lines, start):
 
 
 def find_table(lines, name, array=False):
+    want = normalize_table(name)
     for head in scan_headers(lines):
-        if head["name"] == name and head["array"] == array:
+        if head["norm"] == want and head["array"] == array:
             return head
     return None
 
@@ -113,14 +170,14 @@ def reject_control(value: str, label: str) -> bool:
 
 
 def validate(lines):
-    """文本级复验：普通表同名出现两次 = 非法 TOML。"""
+    """文本级复验：普通表同名出现两次 = 非法 TOML（带引号与不带引号写法算同一张表）。"""
     seen = {}
     for head in scan_headers(lines):
         if head["array"]:
             continue
-        if head["name"] in seen:
+        if head["norm"] in seen:
             return False, "重复表 [%s]" % head["name"]
-        seen[head["name"]] = True
+        seen[head["norm"]] = True
     try:
         import tomllib
     except ImportError:
@@ -177,10 +234,11 @@ def cmd_set(path: Path, dotted: str, value: str, backup: bool, raw: bool = False
     else:
         head = find_table(lines, table)
         if head is None:
+            header = render_table(table)
             if lines and not lines[-1].endswith("\n"):
                 lines[-1] += "\n"
-            lines.append("\n[%s]\n%s = %s\n" % (table, key, rendered))
-            action = "新增表 [%s] 并写入" % table
+            lines.append("\n[%s]\n%s = %s\n" % (header, key, rendered))
+            action = "新增表 [%s] 并写入" % header
         else:
             end = table_span(lines, head["i"])
             matcher = key_re(key)
@@ -365,13 +423,14 @@ def cmd_check(path: Path) -> int:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     heads = scan_headers(lines)
-    seen, dups = set(), []
+    seen, norms, dups = set(), set(), []
     for head in heads:
         if head["array"]:
             continue
-        if head["name"] in seen:
+        if head["norm"] in norms:               # 带引号与不带引号写法是同一张表
             dups.append(head["name"])
         seen.add(head["name"])
+        norms.add(head["norm"])
     print("文件：%s（%d 行）" % (path, len(lines)))
     print("表：%s" % (", ".join(sorted(seen)) or "（无）"))
     if dups:
