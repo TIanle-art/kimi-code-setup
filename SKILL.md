@@ -96,7 +96,7 @@ pgrep -fl exa-bridge           # 有没有既存的桥
 | 桥的端口 | `8787`（被占用才换） |
 | 本地访问令牌 | 现场生成，不劳用户 |
 | 常驻方式 | mac 用 launchd、win 用计划任务、Linux 用 systemd user unit，默认就装 |
-| MCP 通道 | 默认装 exa + kimi-cu（见第 3 步） |
+| MCP 通道 | 默认装 exa + kimi-cu，**kimi-cu 只在 macOS / Windows 装，Linux 不装**（见第 3 步） |
 | 权限模式 / 思考强度 | `yolo`（Ask When Needed）+ 模型级 `default_effort = "max"`，见第 1、4 步 |
 | 状态栏（缓存率 + 余额） | 默认装（见第 7 步）；余额段只在 provider 有余额接口时出现 |
 
@@ -195,13 +195,13 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
     |------|--------------------------------------|---------|----------------|
     | macOS | `kimi-computer-use/latest/KimiCU.app.zip`（App，用 `ditto` 解压）+ `kimi-computer-use/latest/kimi-cu-plugin.zip`（插件），装完跑 `request-permissions --ax --screen` | `kimi-cu` | `mcp__plugin-kimi-cu_<server>__*` |
     | Windows | `kimi-computer-use-windows/latest/setup_windows.ps1`（校验 SHA-256 + Authenticode，把 runtime 装到 `%LOCALAPPDATA%\KimiCU\`）+ `kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`（插件） | `kimi-cu-win` | `mcp__plugin-kimi-cu-win_win__*` |
-    | Linux | **没有**——官方只发 macOS / Windows 两套包（2026-09-16 查证：官方文档只列这两个平台；CLI 的 `kimiCu.ts` 里只有 `createMacKimiCuEntry` / `createWindowsKimiCuEntry`；官方插件市场 `plugins/marketplace.json` 里没有 kimi-cu 条目）。**别硬装 macOS 包**：`KimiCU.app.zip` 是带 AppleScript 的 Mach-O App，Linux 上跑不起来 | — | — |
+    | Linux | **不装**（2026-09-16 与用户确认的约定）——官方只发 macOS / Windows 两套包，Linux 上直接跳过、别去折腾。查证：官方文档只列这两个平台；CLI 的 `kimiCu.ts` 里只有 `createMacKimiCuEntry` / `createWindowsKimiCuEntry`；官方插件市场 `plugins/marketplace.json` 里没有 kimi-cu 条目。**别硬装 macOS 包**：`KimiCU.app.zip` 是带 AppleScript 的 Mach-O App，Linux 上跑不起来 | — | — |
 
   - **手动装**（两条路等价，Windows 侧实测过）：TUI 里 `/plugins install <上表 plugin.zip 的完整 URL>`（`/plugins` 是**交互式斜杠命令，`kimi -p` 里不会执行**）；Windows 的 runtime 也可以直接跑官方脚本：`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-RestMethod 'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1' | Invoke-Expression"`。装完 `/reload` 或新开会话生效。
   - **别再手写 `mcp.json` 的 kimi-cu 条目**：官方插件自带 MCP 声明（Windows 是 `cmd /c bin\kimi-cu-mcp.cmd` → `%LOCALAPPDATA%\KimiCU\kimi-cu.exe mcp`，cwd 是插件根）。手写条目与插件**并存会各拉一个实例抢键鼠**——`verify.py` 的 MCP 检查专门拦这一条（实测报 FAIL），所以切换顺序是「先装插件 → 再删手写条目 → `/reload` 或新开会话」。
   - **macOS 权限**：首次调用若报权限错误，按安装器提示、或去「系统设置 → 隐私与安全性」给 KimiCU 打开辅助功能 / 屏幕录制。
   - **Windows 注意**：需要 PowerShell 5.1 或 7；会短暂接管真实鼠标键盘（不如 macOS 能稳定后台注入）；目标程序以管理员运行时 KimiCU 也要同级权限；安全软件可能拦"输入注入"，需要放行。另外**桌面端设置里的「Computer Use」是 macOS 专属**（`process.platform !== "darwin"` 直接返回 unsupported），Windows 上找不到它是正常的。
-  - **Linux 上没有官方安装路径（2026-09-16 查证，别白费劲）**：要"操作界面"只能绕——① 官方插件 **Kimi WebBridge**（`/plugins` → Official，跨平台；装的是浏览器扩展，驱动你自己的浏览器，不是桌面 App）；② 需要点界面的活儿改走 API / CLI。`verify.py` 在 Linux 上已把 kimi-cu 两项降级成 INFO，不再算告警。
+  - **Linux 上不装 kimi-cu（2026-09-16 与用户确认的约定；官方也没有 Linux 包，别白费劲）**：`verify.py` 在 Linux 上把 kimi-cu 两项降级成 INFO，不再算告警。真要"驱动浏览器"另有官方 **Kimi WebBridge** 插件（`/plugins` → Official，跨平台），但那属于额外需求、**默认不装**；需要点界面的活儿改走 API / CLI。
 - 权限：`[[permission.rules]]` + `decision = "allow"` + `pattern = "mcp__exa__*"`；**kimi-cu 别给 allow，让它按默认询问**——它会真的动你的鼠标键盘。
 - `enabled` / `startupTimeoutMs` / `toolTimeoutMs` / `enabledTools` 都可省；改完新开会话生效。
 
@@ -386,4 +386,4 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - 钩子 / 状态栏命令都写成 `python3 ~/.kimi-code/hooks/todo-panel-guard.py` / `python3 ~/.kimi-code/statusline.py`（与 macOS 相同；`~` 由 shell 展开，实测可用）。
 - **CRLF 坑（本机实测踩到，已修）**：从 Windows 侧打包出来的工作区是 CRLF，`sed` 生成的 systemd unit 每行结尾带 `\r` → `EXA_BRIDGE_TOKEN` 尾部多一个回车，与 `config.toml` 里的值对不上（当时 `patch-config.py` 的复验拦下了没落盘，但没修之前一直是个雷）。现在的五道防线：整仓转 LF + `.gitattributes`（`* text=auto eol=lf`）+ 文档里 `sed` 前一律先 `tr -d '\r'` + `patch-config.py` 当场拒绝控制字符 + `verify.py` 新增「常驻定义令牌」比对（连 `\r` 都认得出来）。
 - 端到端：Todo 守卫用 `kimi -p` 实测——故意留一个全 `done` 的面板，被钩子拦回、模型随后自行清空。
-- kimi-cu：**Linux 没有官方路径**（证据与退路见第 3 步的表格和下面那条说明）。
+- kimi-cu：**Linux 上不装**（官方没有 Linux 包，2026-09-16 与用户确认的约定；见第 3 步的表格与那条说明）。

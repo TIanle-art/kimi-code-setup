@@ -393,9 +393,8 @@ def check_mcp(home):
         add("PASS", "MCP kimi-cu：官方插件提供（%s → %s，cwd=%s）"
             % (prefix, cfg.get("command"), cfg.get("cwd") or "."))
     elif IS_LINUX:
-        add("INFO", "MCP kimi-cu：Linux 没有官方安装路径（官方只发 macOS / Windows 包，CLI 里"
-                    "只有 createMacKimiCuEntry / createWindowsKimiCuEntry）——本项跳过；"
-                    "要让 AI 操作浏览器，可装官方 kimi-webbridge 插件（跨平台，只管浏览器）")
+        add("INFO", "MCP kimi-cu：Linux 不装（官方只发 macOS / Windows 包；约定见 SKILL.md 第 3 步）"
+                    "——本项跳过")
     else:
         add("WARN", "MCP kimi-cu 缺失 —— 无法操作本机浏览器 / App 界面")
 
@@ -432,7 +431,7 @@ def check_tools(home):
     if cu_tools:
         add("PASS", "工具 kimi-cu：%d 个" % len(cu_tools))
     elif IS_LINUX:
-        add("INFO", "工具 kimi-cu：Linux 没有官方安装路径，本项跳过（见 SKILL.md 第 3 步）")
+        add("INFO", "工具 kimi-cu：Linux 不装，本项跳过（约定见 SKILL.md 第 3 步）")
     else:
         add("WARN", "工具 kimi-cu：缺失（手写条目与插件都没有）")
     add("PASS", "工具总数：%d（最近 %d 个会话快照的并集）" % (len(names), used))
