@@ -1,0 +1,32 @@
+# kimi-code exa-bridge —— Linux systemd 用户单元模板（未实测，按标准做法写的）
+#
+# 占位符替换（和 launchagent.plist.template 同一套 __名字__）：
+#   D=$HOME/.kimi-code/exa-bridge
+#   sed -e "s|__PYTHON__|$(command -v python3)|" -e "s|__SCRIPT__|$D/exa-bridge.py|" \
+#       -e "s|__LOG__|$D/bridge.log|" -e "s|__PORT__|8787|" \
+#       -e "s|__EXA_API_KEY__|<Exa key>|" -e "s|__EXA_BRIDGE_TOKEN__|<本地令牌>|" \
+#       systemd-user.service.template > ~/.config/systemd/user/ai.kimi.exa-bridge.service
+#   chmod 600 ~/.config/systemd/user/ai.kimi.exa-bridge.service      # 里面写着 Exa key
+#   systemctl --user daemon-reload && systemctl --user enable --now ai.kimi.exa-bridge
+
+[Unit]
+Description=kimi-code exa-bridge（WebSearch / FetchURL 的内置适配器）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=__PYTHON__ __SCRIPT__
+Environment=EXA_BRIDGE_PORT=__PORT__
+Environment=EXA_API_KEY=__EXA_API_KEY__
+Environment=EXA_BRIDGE_TOKEN=__EXA_BRIDGE_TOKEN__
+# 不用 TUN、改成在终端 export 代理时，取消下面两行注释（systemd 不继承 shell 环境变量）：
+# Environment=HTTPS_PROXY=http://127.0.0.1:7890
+# Environment=NO_PROXY=127.0.0.1,localhost
+Restart=always
+RestartSec=3
+StandardOutput=append:__LOG__
+StandardError=append:__LOG__
+
+[Install]
+WantedBy=default.target

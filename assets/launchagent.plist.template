@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ai.kimi.exa-bridge LaunchAgent 模板
+     占位符（用 sed 或 python 替换，别手改 XML）：
+       __PYTHON__           python3 绝对路径，如 /opt/homebrew/bin/python3
+       __SCRIPT__           exa-bridge.py 绝对路径
+       __LOG__              bridge.log 绝对路径
+       __EXA_API_KEY__      Exa key（uuid 形状）
+       __EXA_BRIDGE_TOKEN__ 本地令牌，可为空字符串
+       __PORT__             端口，默认 8787
+     改完必须 bootout + bootstrap 才生效；用 plutil -lint 校验。
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ai.kimi.exa-bridge</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PYTHON__</string>
+		<string>__SCRIPT__</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>EXA_API_KEY</key>
+		<string>__EXA_API_KEY__</string>
+		<key>EXA_BRIDGE_TOKEN</key>
+		<string>__EXA_BRIDGE_TOKEN__</string>
+		<key>EXA_BRIDGE_PORT</key>
+		<string>__PORT__</string>
+		<!-- 不用 TUN、改成在终端 export 代理时，把下面两行取消注释并改成你的代理地址
+		     （launchd 拉起的进程不继承 shell 里的 HTTPS_PROXY，必须写在这里）：
+		<key>HTTPS_PROXY</key>
+		<string>http://127.0.0.1:7890</string>
+		<key>NO_PROXY</key>
+		<string>127.0.0.1,localhost</string>
+		-->
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>__LOG__</string>
+	<key>StandardErrorPath</key>
+	<string>__LOG__</string>
+</dict>
+</plist>
