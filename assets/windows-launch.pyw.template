@@ -1,8 +1,11 @@
-"""Windows 版 exa-bridge 启动器模板（用 pythonw.exe 跑：无窗口、有日志、带本地令牌）。
+r"""Windows 版 exa-bridge 启动器模板（用 pythonw.exe 跑：无窗口、有日志、带本地令牌）。
 
 占位符：双下划线包住的名字，共 4 个——SCRIPT / LOG / EXA_API_KEY / EXA_BRIDGE_TOKEN
 （用 python 或 PowerShell 替换，别手改下面那几行。这段注释刻意不写完整的占位符记号：
 替换会把注释里的记号一并改掉。）
+路径可以**直接用 Windows 反斜杠**：SCRIPT / LOG 那两行是 raw 字符串（r"…"），
+`C:\Users\…` 不会被当成转义——早先的普通字符串版本会在 `\U` 上报 SyntaxError，
+而 pythonw 下没有任何输出可看，只会表现为"桥没起来"。
   SCRIPT                exa-bridge.py 绝对路径
   LOG                   bridge.log 绝对路径
   EXA_API_KEY           Exa key（uuid 形状），留空 = 回落到 mcp.json 的 x-api-key
@@ -32,8 +35,8 @@ os.environ.setdefault("EXA_API_KEY", "__EXA_API_KEY__")
 # os.environ.setdefault("HTTPS_PROXY", "http://127.0.0.1:7890")
 # os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 
-_log = open("__LOG__", "a", buffering=1, encoding="utf-8", errors="replace")
+_log = open(r"__LOG__", "a", buffering=1, encoding="utf-8", errors="replace")
 sys.stdout = _log
 sys.stderr = _log
 
-runpy.run_path("__SCRIPT__", run_name="__main__")
+runpy.run_path(r"__SCRIPT__", run_name="__main__")

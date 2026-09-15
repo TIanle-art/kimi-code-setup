@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""kimi-code 自定义状态栏：权限模式、上下文量、缓存命中率和 API 余额。
+"""kimi-code 自定义状态栏：整个会话的缓存命中率 + 当前 provider 的 API 余额。
 
 由 ~/.kimi-code/tui.toml 的 [status_line] command 调用。kimi-code 通过 stdin
 传入 JSON 快照（model / cwd / gitBranch / permissionMode / planMode / sessionId
@@ -252,7 +252,9 @@ def balance_label(provider_name, payload):
     state = read_state(cache_path)
     now = time.time()
     attempted = float(state.get("attempted") or 0)
-    wait = BALANCE_RETRY_S if state.get("error") else BALANCE_TTL_S
+    # 短重试的两种情况：上次报了错，或上次尝试根本没写回金额——Windows 上刷新子进程会被
+    # runner 的 taskkill /T 连坐杀掉（start_new_session 在那边是空转），不修就要白等 5 分钟。
+    wait = BALANCE_RETRY_S if (state.get("error") or state.get("amount") is None) else BALANCE_TTL_S
     if now - attempted > wait:
         # 先落盘再把请求丢给后台，避免请求期间每秒重开一个子进程
         state["attempted"] = now
@@ -348,23 +350,6 @@ def mode_badge(payload):
     return " ".join(parts)
 
 
-def context_segment(payload):
-    """优先用 token 数计算比例，避免快照里的 contextUsage 与数字不一致。"""
-    used = payload.get("contextTokens")
-    maximum = payload.get("maxContextTokens")
-    if (isinstance(used, (int, float)) and not isinstance(used, bool)
-            and isinstance(maximum, (int, float)) and not isinstance(maximum, bool)
-            and used >= 0 and maximum > 0):
-        percentage = round(100 * used / maximum)
-        return "%s %s %s" % (
-            dim("context"), bold("%d%%" % percentage),
-            dim("(%s/%s)" % (format_tokens(used), format_tokens(maximum))))
-    ratio = payload.get("contextUsage")
-    if isinstance(ratio, (int, float)) and not isinstance(ratio, bool) and 0 <= ratio <= 1:
-        return "%s %s" % (dim("context"), bold("%d%%" % round(100 * ratio)))
-    return None
-
-
 def usage_totals(totals):
     if not totals:
         return None
@@ -421,9 +406,6 @@ def build_line(payload):
     badge = mode_badge(payload)
     if badge:
         parts.append(badge)
-    segment = context_segment(payload)
-    if segment:
-        parts.append(segment)
     if payload.get("model"):
         parts.append(payload["model"])
     totals = session_usage(payload.get("sessionId"))
@@ -447,7 +429,9 @@ def build_line(payload):
 # 它拉活（macOS 的 launchd / Linux 的 systemd 都会）。这条命令在会话里每秒跑一次，顺手
 # 探活最省事：只做 TCP connect（不发请求、不读响应），拒连就 detached 拉起。
 BRIDGE_WATCH_INTERVAL_S = 30
-BRIDGE_RELAUNCH_COOLDOWN_S = 60
+# 拉活重试间隔：与探活节流（BRIDGE_WATCH_INTERVAL_S=30）同频——拉一次没起来，下个 tick 再拉。
+# 原来写 60 秒：桥被 runner 的 taskkill /T 连坐杀掉时冷却已经落盘，桥要多躺 30~90 秒。
+BRIDGE_RELAUNCH_RETRY_S = 30
 BRIDGE_PROBE_TIMEOUT_S = 0.05
 
 
@@ -461,26 +445,26 @@ def bridge_endpoint():
 
 
 def relaunch_bridge():
-    """拉起桥：优先直接跑 launch.pyw，没有才退回启动文件夹里的快捷方式。
-
-    两条路等价（快捷方式就是 pythonw.exe 跑同一个 launch.pyw），但 ShellExecute 走快捷
-    方式实测 ~240ms、Popen 只要 ~34ms——这条命令一秒一次、总共只有 300ms 预算，能省就省。
+    """拉起桥。**优先走启动文件夹里的快捷方式**：ShellExecute 由 explorer 拉起，不在我们的
+    进程树里——runner 的 300ms 超时会对整棵树 `taskkill /T /F`，直接 Popen 出来的子进程会被
+    一起杀掉，桥就永远起不来（冷却还被烧掉）。没有快捷方式（例如当初装的是计划任务）才退回
+    直接 Popen。
     """
     import subprocess
 
-    launch = os.path.join(KIMI_HOME, "exa-bridge", "launch.pyw")
+    lnk = os.path.join(os.environ.get("APPDATA") or "", "Microsoft", "Windows",
+                       "Start Menu", "Programs", "Startup", "kimi-exa-bridge.lnk")
     try:
+        if os.path.exists(lnk):
+            os.startfile(lnk)                       # 脱离进程树：被 taskkill 连坐也拉得起来
+            return "shortcut"
+        launch = os.path.join(KIMI_HOME, "exa-bridge", "launch.pyw")
         if os.path.exists(launch):
             subprocess.Popen([sys.executable, launch],
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True,
                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             return "launch.pyw"
-        lnk = os.path.join(os.environ.get("APPDATA") or "", "Microsoft", "Windows",
-                           "Start Menu", "Programs", "Startup", "kimi-exa-bridge.lnk")
-        if os.path.exists(lnk):
-            os.startfile(lnk)                       # 退路：等价于双击那个快捷方式
-            return "shortcut"
     except Exception:
         pass
     return None
@@ -515,7 +499,7 @@ def watch_bridge():
         return
     except Exception as exc:
         state["last_error"] = "%s: %s" % (type(exc).__name__, exc)
-    relaunch = now - float(state.get("relaunched") or 0) >= BRIDGE_RELAUNCH_COOLDOWN_S
+    relaunch = now - float(state.get("relaunched") or 0) >= BRIDGE_RELAUNCH_RETRY_S
     if relaunch:
         state["relaunched"] = now
     write_state(path, state)        # 先落盘：拉起动作可能被 runner 的 300ms 超时打断，
@@ -525,6 +509,13 @@ def watch_bridge():
 
 
 def main():
+    # runner 按 UTF-8 解 stdout，而 Windows 上管道默认跟 ANSI 代码页走：cp936 / cp932 /
+    # cp1251 都编不出 ¥（实测 UnicodeEncodeError）→ 退出码非 0、整行被丢弃、静默回落内置
+    # 布局。这里把 stdout 钉死 UTF-8，平台代码页就影响不到这一行了。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     if "--refresh-balance" in sys.argv:
         index = sys.argv.index("--refresh-balance")
         if index + 1 < len(sys.argv):
@@ -541,11 +532,11 @@ def main():
     except Exception:
         return 0
     if line:
-        sys.stdout.write(line + "\n")
         try:
+            sys.stdout.write(line + "\n")
             sys.stdout.flush()                      # 先把第一行送出去，再做兜底探活
         except Exception:
-            pass
+            pass                                    # 写不出去也别让退出码非 0（runner 会丢整行）
     watch_bridge()
     return 0
 

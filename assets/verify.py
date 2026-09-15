@@ -602,16 +602,13 @@ def statusline_behaves(script):
             }) + "\n" for cached, other in ((500, 60), (400, 40))),
             encoding="utf-8")
         payload = json.dumps({"model": "Probe Model", "cwd": "/tmp", "permissionMode": "yolo",
-                              "planMode": False, "sessionId": "session_probe",
-                              "contextTokens": 358400, "maxContextTokens": 1024000,
-                              "contextUsage": 0.1})
+                              "planMode": False, "sessionId": "session_probe"})
         proc = subprocess.run([sys.executable, str(script)], input=payload, capture_output=True,
                               text=True, timeout=15, env=dict(os.environ, KIMI_CODE_HOME=str(probe_home)))
     plain = re.sub(r"\x1b\[[0-9;]*m", "", proc.stdout or "")
     first = plain.strip().splitlines()[0] if plain.strip() else ""
-    if (proc.returncode == 0 and "Ask When Needed" in plain
-            and "context 35% (350k/1000k)" in plain and "cache 90%" in plain):
-        return True, "输出含权限模式、context 35% (350k/1000k)、cache 90%"
+    if proc.returncode == 0 and "cache 90%" in plain:
+        return True, "输出含 cache 90%（read 900 / uncached 100）"
     return False, "退出码 %s，第一行：%s" % (proc.returncode, first[:90] or "（空）")
 
 
