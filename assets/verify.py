@@ -266,6 +266,36 @@ def check_bridge(base_url, token):
         add("FAIL", "直打桥搜索 → HTTP %s：%s" % (status, body[:200]))
 
 
+def plugin_mcp_servers(home):
+    """插件自带的 MCP 声明：<data>/plugins/installed.json → 各自 kimi.plugin.json 的 mcpServers。
+
+    返回 {工具命名前缀: (server 配置, 插件根目录)}——工具名实际是
+    mcp__plugin-<插件id>_<server名>__<tool>，这里按同样规则拼前缀。
+    """
+    out = {}
+    reg = home / "plugins" / "installed.json"
+    if not reg.exists():
+        return out
+    try:
+        data = json.loads(reg.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+    for entry in (data.get("plugins") or []):
+        if not entry.get("enabled", True):
+            continue
+        root = Path(entry.get("root") or "")
+        manifest = root / "kimi.plugin.json"
+        if not manifest.exists():
+            continue
+        try:
+            m = json.loads(manifest.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        for sname, cfg in (m.get("mcpServers") or {}).items():
+            out["mcp__plugin-%s_%s__" % (entry.get("id"), sname)] = (cfg, root)
+    return out
+
+
 def check_mcp(home):
     path = home / "mcp.json"
     if not path.exists():
@@ -276,7 +306,10 @@ def check_mcp(home):
     except Exception as exc:
         add("FAIL", "MCP：mcp.json 解析失败 %s" % exc)
         return
-    add("PASS", "MCP：已配置 %s" % (", ".join(sorted(servers)) or "（无）"))
+    pservers = plugin_mcp_servers(home)
+    add("PASS", "MCP：mcp.json 已配置 %s%s" % (
+        ", ".join(sorted(servers)) or "（无）",
+        "；插件自带 %s" % ", ".join(sorted(pservers)) if pservers else ""))
     exa = servers.get("exa")
     if exa:
         has_key = any(k.lower() == "x-api-key" for k in (exa.get("headers") or {}))
@@ -284,13 +317,23 @@ def check_mcp(home):
             "带 key，走自己的额度" if has_key else "匿名模式，不带 key"))
     else:
         add("WARN", "MCP exa 缺失 —— 需要批量抓取/agent_run 时用不了")
+    # kimi-cu 有两条互斥的路：mcp.json 手写条目（旧写法）或官方插件自带声明（Windows 推荐）。
+    # 两条同时在，就各拉起一个实例抢键鼠——所以并存直接报 FAIL，别只看"能用"。
     cu = servers.get("kimi-cu")
-    if cu:
+    cu_plugins = {k: v for k, v in pservers.items() if "kimi-cu" in k}
+    if cu and cu_plugins:
+        add("FAIL", "MCP kimi-cu：mcp.json 手写条目与插件 %s 并存 —— 两个实例会抢键鼠，删掉手写条目"
+            % ", ".join(sorted(cu_plugins)))
+    elif cu:
         cmd = cu.get("command") or ""
         ok = (not cmd) or Path(cmd).exists()
         add("PASS" if ok else "WARN",
-            "MCP kimi-cu：%s%s" % (cmd or cu.get("url"),
+            "MCP kimi-cu：mcp.json 手写条目 %s%s" % (cmd or cu.get("url"),
                                    "" if ok else "（文件不存在，KimiCU 装了没？）"))
+    elif cu_plugins:
+        prefix, (cfg, root) = sorted(cu_plugins.items())[0]
+        add("PASS", "MCP kimi-cu：官方插件提供（%s → %s，cwd=%s）"
+            % (prefix, cfg.get("command"), cfg.get("cwd") or "."))
     else:
         add("WARN", "MCP kimi-cu 缺失 —— 无法操作本机浏览器 / App 界面")
 
@@ -318,10 +361,14 @@ def check_tools(home):
         return
     for label, prefix, level in (("WebSearch", "WebSearch", "FAIL"),
                                  ("FetchURL", "FetchURL", "FAIL"),
-                                 ("mcp__exa__", "mcp__exa__", "WARN"),
-                                 ("mcp__kimi-cu__", "mcp__kimi-cu__", "WARN")):
+                                 ("mcp__exa__", "mcp__exa__", "WARN")):
         found = [n for n in names if n.startswith(prefix)]
         add("PASS" if found else level, "工具 %s：%s" % (label, "%d 个" % len(found) if found else "缺失"))
+    # kimi-cu 的工具名看声明走哪条路：手写条目是 mcp__kimi-cu__*，插件是 mcp__plugin-<id>_<server>__*
+    cu_tools = [n for n in names
+                if n.startswith("mcp__kimi-cu__") or ("kimi-cu" in n and n.startswith("mcp__plugin-"))]
+    add("PASS" if cu_tools else "WARN",
+        "工具 kimi-cu：%s" % ("%d 个" % len(cu_tools) if cu_tools else "缺失（手写条目与插件都没有）"))
     add("PASS", "工具总数：%d（最近 %d 个会话快照的并集）" % (len(names), used))
 
 
