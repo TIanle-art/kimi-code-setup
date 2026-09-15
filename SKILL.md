@@ -15,10 +15,10 @@ metadata:
 ## 这个目录放在哪、怎么用
 
 - **怎么触发**：拷进目标机器的 `~/.kimi-code/skills/kimi-code-setup/` 后，直接说「**调试 kimi-code**」「配置 kimi-code」这类话即可——agent 按 description 命中后自动加载本文件，缺参数（Exa key、平台是 mac / win 还是 linux、要不要挂 MCP）它会先问清再动手，不用背固定提示词。
-- **本机（作者机器）**：**正本在桌面** `~/Desktop/kimi-code-setup/`（改动只动这份），**安装副本在** `~/.kimi-code/skills/kimi-code-setup/`（kimi 自动发现、直接能命中 `kimi-code-setup` skill 的那份）。改完正本跑一次同步，再体检确认：
+- **本机（作者机器）**：**正本在桌面** `~/Desktop/kimi-code-setup/`（改动只动这份；它同时是个 git 仓库，`origin` 指向公开仓库 https://github.com/TIanle-art/kimi-code-setup ，改完 `git push` 就更新公开版），**安装副本在** `~/.kimi-code/skills/kimi-code-setup/`（kimi 自动发现、直接能命中 `kimi-code-setup` skill 的那份）。改完正本跑一次同步（**必须带 `--exclude=.git`**，否则会把仓库元数据拷进 skill 目录），再体检确认：
 
   ```bash
-  rsync -a --delete ~/Desktop/kimi-code-setup/ ~/.kimi-code/skills/kimi-code-setup/
+  rsync -a --delete --exclude=.git ~/Desktop/kimi-code-setup/ ~/.kimi-code/skills/kimi-code-setup/
   python3 ~/Desktop/kimi-code-setup/assets/verify.py | tail -3
   ```
 - **要用在别的机器上**：把整个目录拷到目标机器的 `~/.kimi-code/skills/kimi-code-setup/`（Windows：`%USERPROFILE%\.kimi-code\skills\kimi-code-setup\`），那里新开的 kimi 会话就会自动发现它；不拷也行，直接把文件带过去让 agent 读。
