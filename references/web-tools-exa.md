@@ -169,7 +169,7 @@ $sc.Save()
 
 **2. 判据（三条路相同）**：`curl.exe -s http://127.0.0.1:8787/health` 返回 `"ok":true` 且 `"key":true`；`$dst\bridge.log` 里出现 `exa-bridge listening on ...`。写完自启项**立刻回读一次**，别只信命令回显的"成功"——`Get-ScheduledTaskInfo -TaskName kimi-exa-bridge` / `reg query "HKCU\..." /v kimi-exa-bridge` / `Get-ChildItem ([Environment]::GetFolderPath('Startup'))`。
 
-**2.5 重启后桥没起来（2026-09-16 实测踩过）**：这台机器 01:07 重启、01:08 登录，之后**桥没有自己起来**——`/health` 连接被拒、`bridge.log` 里没有新横幅，而 Windows「设置 → 应用 → 启动」里那条 `pythonw.exe`（就是本快捷方式）**显示为「开」**；同一次登录里 OneDrive、TranslucentTB 等**用户级**自启项同样"标记为开却没在跑"（服务级的火绒 / RtkAudUService 正常）。**快捷方式本身是好的**：手动跑一次那个 `.lnk`，桥立刻 `listening`。另外注意：桥的进程名是 **`pythonw3.13`**（Store 版 Python 的真名），`Get-Process pythonw` 查不到它，别据此判定"桥没在跑"——只认 `/health`。所以碰到"重启后 WebSearch 全挂"按这个顺序：① `verify.py` 或 `curl /health` 确认桥不在；② 直接跑一次快捷方式；③ 只有重现失败才去查配置。
+**2.5 桥没在跑（重启后没起来 / 中途被杀，2026-09-16 两次实测）**：① **重启后没起来**——01:07 重启、01:08 登录，之后桥没有自己起来（`/health` 连接被拒、`bridge.log` 里没有新横幅），而 Windows「设置 → 应用 → 启动」里那条 `pythonw.exe`（就是本快捷方式）**显示为「开」**；同一次登录里 OneDrive、TranslucentTB 等**用户级**自启项同样"标记为开却没在跑"（服务级的火绒 / RtkAudUService 正常）。② **没重启也会挂**——同一天 02:01 又发现桥没了，`bridge.log` 里**只有请求行、没有任何 traceback**，说明它是**被杀**而不是自己崩（火绒是头号嫌疑，未坐实）；那次同样是"手动跑一次快捷方式"救活。**快捷方式本身两次都是好的**：跑一次那个 `.lnk`，桥立刻 `listening`。另外注意：桥的进程名是 **`pythonw3.13`**（Store 版 Python 的真名），`Get-Process pythonw` 查不到它，别据此判定"桥没在跑"——**判断存活只认 `/health`，别依赖日志**。处理顺序：① `verify.py` 或 `curl /health` 确认桥不在；② 直接跑一次快捷方式；③ 只有重现失败才去查配置。
 
 **3. 排错**：`.pyw` 起不来时用 `python.exe`（不是 pythonw）前台跑同一个 `launch.pyw`，日志会同时打到终端（Ctrl+C 退出）；端口被占就在启动器里加一行 `os.environ.setdefault("EXA_BRIDGE_PORT", "8788")`，并同步改 `config.toml` 两处 `base_url`。
 

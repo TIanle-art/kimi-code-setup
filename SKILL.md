@@ -307,7 +307,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 |------|------|--------|
 | `出网不通` / `代理出口不通` | 网络 / 代理层问题，**不是 kimi-code 的错**——体检脚本会替你区分"要走代理的域名全超时但直连正常"（=代理出口挂了）和"整机没网" | 代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；恢复后重试即可，不用改配置。细节见 `references/web-tools-exa.md` 排错表 |
 | `services.*` 缺失或指向 Kimi 托管 | 大概被 `/login` 顶掉了 | 按第 2 步用补丁脚本加回来 |
-| `桥 /health 打不通` | 桥没在跑 | macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；Windows `Get-ScheduledTaskInfo`；Linux `systemctl --user status ai.kimi.exa-bridge` |
+| `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 本机走启动文件夹 → 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/web-tools-exa.md` 2.5 |
 | `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐，或把桥的 token 留空 |
 | `桥脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 想清楚以哪份为准，再 `cp` 过去 + 重启桥 |
 | `钩子：没有 [[hooks]]` / `没装 Todo 面板守卫` / `钩子脚本行为 … FAIL` | 第 6 步没做、规则被删、或脚本被改坏 | 按第 6 步重装（`ensure-hook` 幂等，重复跑安全）；钩子**新开会话**才生效 |
