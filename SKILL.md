@@ -233,7 +233,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" ensure-rule allow 'mcp__exa__*'
 
 kimi-code 会读（层级叠加，就近优先）：`~/.kimi-code/AGENTS.md` → 项目 `.kimi-code/AGENTS.md` → 项目 `AGENTS.md`（另有 `~/.agents/AGENTS.md`）。新机器至少写清联网工具的分工，否则模型不知道什么时候换通道：
 
-> **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl；要操作本机浏览器 / App 界面时用 `mcp__kimi-cu__*`。
+> **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl；要操作本机浏览器 / App 界面时用 computer-use 工具——手写 `mcp.json` 条目叫 `mcp__kimi-cu__*`，Windows 官方插件叫 `mcp__plugin-kimi-cu-win_win__*`（按你机器上实际装的写进去）。
 
 ### 6. Todo 面板守卫（Stop 钩子 + 约定）
 
