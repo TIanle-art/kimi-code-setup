@@ -46,11 +46,13 @@ metadata:
 | `assets/windows-launch.pyw.template` | Windows 桥启动器模板（给 `pythonw.exe` 用）：替桥写进 `EXA_BRIDGE_TOKEN` / `EXA_API_KEY`，并把 stdout/stderr 重定向到 `bridge.log`——计划任务与启动文件夹都塞不进环境变量，`pythonw` 又没有控制台。部署到 `~/.kimi-code/exa-bridge/launch.pyw`，见 `references/web-tools-exa.md` 第 3 节（Windows） |
 | `assets/todo-panel-guard.py` | Stop 钩子：Todo 面板里的任务全部 `done` 却没清空时，拦下回合结束并提示先清空；部署到 `~/.kimi-code/hooks/`，见第 6 步 |
 | `assets/statusline.py` | footer 状态栏：常显整个会话的缓存命中率与 provider 余额；部署到 `~/.kimi-code/`，靠 `tui.toml` 的 `[status_line]` 挂上，见第 7 步 |
+| `assets/statusline-fast.c` | **Windows 专用**：状态栏热路径（编成 `statusline-fast.exe`，`gcc -O2 -static -s`）。同步 Python 空闲 240ms、忙时 400ms+，顶不住 300ms 预算；改由它做「快照落盘 + 打印预渲染行 + 拉起守护进程」，实测 **44–73ms**。见 `references/statusline.md` |
+| `assets/statusline-daemon.pyw` | **Windows 专用**：状态栏守护进程（常驻 pythonw，约 1% CPU），读 `payload_*.json` 渲染 `line_*.txt`，顺带管 exa-bridge 探活与余额刷新；空闲 1 小时自动退出，热路径按心跳自动拉起 |
 | `assets/kimi-web-status.user.js` | 浏览器用户脚本（Tampermonkey）：把 cache/bal 显示在 `kimi web` 页面角落，数据来自桥的 `/status`；见 `references/statusline.md`「web 端」 |
 | `assets/patch-config.py` | **改 config.toml / tui.toml 只用它**：幂等（存在就改值、不存在才插入）、保留注释、写前备份、写前复验（不通过不落盘）；数组表用 `ensure-rule` / `ensure-hook` 按内容去重追加，`unset` / `remove-rule` / `remove-hook` 负责删除（回滚用）；`--raw` 写裸值，默认按字符串加引号。值里带 `\r` / `\n` 会**当场拒绝**（CRLF 坑的防线之一） |
 | `assets/verify.py` | **一条命令体检**（分类摘要，细节以脚本输出为准）：CLI 版本 / `kimi doctor` / 出网 / 配置（默认模型、思考强度、权限模式、工具开关）/ `[services.*]` 端点**与两处 `api_key` 一致性** / 桥（`/health`、Exa key、`/status`、直打 `/search` **与 `/fetch`**）/ 常驻定义令牌一致性（与两处 `api_key` 对账）+ 解析自测 / MCP（含 kimi-cu 并存拦截）/ 工具清单 / 钩子（含行为自测）/ 状态栏（含行为自测）/ 日志扫描 / 脚本漂移 / 补丁脚本自测 / 触发链；`--e2e` 再加一次真实端到端。只读，返回 0/1/2 |
 
-> **「脚本漂移」比的是这 3 个部署脚本**：`assets/exa-bridge.py` → `~/.kimi-code/exa-bridge/exa-bridge.py`、`assets/todo-panel-guard.py` → `~/.kimi-code/hooks/todo-panel-guard.py`、`assets/statusline.py` → `~/.kimi-code/statusline.py`。**不比对** `patch-config.py`、`verify.py`、三个 `.template` 生成出的常驻定义、`kimi-web-status.user.js`。
+> **「脚本漂移」比的是这 4 个部署脚本**：`assets/exa-bridge.py` → `~/.kimi-code/exa-bridge/exa-bridge.py`、`assets/todo-panel-guard.py` → `~/.kimi-code/hooks/todo-panel-guard.py`、`assets/statusline.py` → `~/.kimi-code/statusline.py`、`assets/statusline-daemon.pyw` → `~/.kimi-code/statusline-daemon.pyw`（Windows）。**不比对** `patch-config.py`、`verify.py`、`statusline-fast.c` 编译出的 `statusline-fast.exe`（本机产物）、三个 `.template` 生成出的常驻定义、`kimi-web-status.user.js`。
 
 ## 主流程
 
@@ -261,10 +263,19 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
   set status_line.command "python3 ~/.kimi-code/statusline.py"
 ```
 
-- 缓存率从会话日志 `agents/main/wire.jsonl` 的 `usage.record` 累计（与 `/usage` 面板同源），余额走 provider 的余额接口、缓存 5 分钟后台刷新；脚本主路径 macOS ~50ms、**Windows 实测 156ms（经 `cmd.exe`，惰性导入 `urllib.request`/`subprocess` 之后；改之前 244ms）**，而 kimi-code 给的上限是 300ms，失败/超时自动回落内置布局。
-- Windows（2026-09-16 实测：Windows 11 + kimi-code 0.43.1）：脚本放 `%USERPROFILE%\.kimi-code\`，命令写 `python3 C:/Users/<你>/.kimi-code/statusline.py`——正斜杠绝对路径，cmd.exe 与 Git Bash 都能跑（`~` 不展开；`%USERPROFILE%` 只在 cmd 里展开）。**别照搬 `py -3`**：Store 版 Python 不带 `py` 启动器，先 `where python` 看一眼。300ms 余量很薄，别把重依赖加回脚本顶部。
-- **Windows 上这脚本还顺手兜底桥**（2026-09-16 加）：同一条命令会探活 exa-bridge，拒连就自动拉起（门闩是 runner 注入的 `KIMI_CODE_STATUS_LINE=1`，手动跑/体检自测不触发；实测杀掉桥 2 秒内自愈）。也就是说它不再只是"显示"——细节、开销与边界都在 `references/statusline.md`「已知边界」。
-- 判据：`verify.py` 的状态栏几项全 PASS（含脚本行为自测）；`/reload-tui` 后 footer 第一行出现 `cache N%`（**Windows 2026-09-16 截屏复核过**：footer 第一行渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新）。
+- 缓存率从会话日志 `agents/main/wire.jsonl` 的 `usage.record` 累计（与 `/usage` 面板同源），余额走 provider 的余额接口、缓存 5 分钟后台刷新。显示格式：`<模式徽章>  <模型名>  cache 98%  bal ¥44.50  ~/proj main`（2026-09-16 起去掉了 `cached … · uncached …` 明细段）；kimi-code 给的上限是 300ms，超时/失败自动回落内置布局。
+- **Windows 为什么不是直连 Python**（2026-09-16 实测：Windows 11 + kimi-code 0.43.1 + Store 版 Python 3.13）：`cmd.exe /d /s /c` + Python 启动 + 脚本自身 = 空闲 ≈240ms、机器忙/多开窗口 400ms+，300ms 预算站不住（runner 超时会 `taskkill /T /F` 丢弃结果，footer 就回落内置布局）。所以 Windows 改成两级结构：
+
+  ```bash
+  cp "$SKILL_DIR/assets/statusline.py" "$SKILL_DIR/assets/statusline-daemon.pyw" "$SKILL_DIR/assets/statusline-fast.c" ~/.kimi-code/
+  /c/msys64/mingw64/bin/gcc.exe -O2 -static -s -o ~/.kimi-code/statusline-fast.exe ~/.kimi-code/statusline-fast.c
+  python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kimi-code}/tui.toml" \
+    set status_line.command "C:/Users/<你>/.kimi-code/statusline-fast.exe"
+  ```
+
+  热路径 `statusline-fast.exe`（实测 **44–73ms**）只做：快照落盘 → 打印守护进程预渲染的行 → 心跳过期时拉起守护进程；渲染、桥探活、余额刷新全在常驻的 `statusline-daemon.pyw` 里（不在 runner 进程树里，不受 `taskkill /T` 连坐）。命令必须写成**无引号的正斜杠绝对路径**（cmd 的 `/s` 会吃掉引号）。**别照搬 `py -3`**：Store 版 Python 不带 `py` 启动器。
+- 判据：`verify.py` 的状态栏几项全 PASS（含脚本行为自测）；`/reload-tui` 后 footer 第一行出现 `cache N%`。Windows 上第一次 tick 可能只有快照、没有行（守护进程 1–2 秒渲染完，下一次 tick 就有）——不是坏了，过程与排错见 `references/statusline.md`。
+- **Windows 上桥的兜底探活也归守护进程管**（拒连就拉活，实测 2 秒内自愈；细节见 `references/statusline.md`「已知边界」与 `references/web-tools-exa.md`）。
 - 自定义行会**整体替换** footer 第一行（脚本复刻了模式徽章 / 模型名 / cwd / git 分支，另加缓存率与余额）——想回到内置槽位就注释掉 `command`。机制、排错、回滚、已知边界都在 `references/statusline.md`。
 
 ### 8. 总验收
@@ -315,7 +326,8 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 | `常驻定义令牌 … 不一致` / `常驻定义有 CR（\r）` | 常驻定义（plist / systemd unit / launch.pyw）里的令牌与 `config.toml` 对不上；最隐蔽的一种是 **CRLF 模板 sed 出来的定义**（令牌尾部多个回车） | 重新生成定义：`sed` 前先 `tr -d '\r' < 模板 \| sed …`；细节见 `references/web-tools-exa.md`「排错速查」 |
 | `桥脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 想清楚以哪份为准，再 `cp` 过去 + 重启桥 |
 | `钩子：没有 [[hooks]]` / `没装 Todo 面板守卫` / `钩子脚本行为 … FAIL` | 第 6 步没做、规则被删、或脚本被改坏 | 按第 6 步重装（`ensure-hook` 幂等，重复跑安全）；钩子**新开会话**才生效 |
-| `状态栏：` 开头的几项（tui.toml 缺 `[status_line]` / command 为空 / 脚本缺失 / 行为自测 FAIL） | 第 7 步没做、`tui.toml` 被还原或被 `/reload-tui` 之外的手段改回、脚本被改坏 | 按第 7 步重装（补丁脚本幂等）；**`/reload-tui` 当场生效**，不用重启会话 |
+| `状态栏：` 开头的几项（tui.toml 缺 `[status_line]` / command 为空 / 脚本缺失 / 行为自测 FAIL / Windows 热路径三件套缺失） | 第 7 步没做、`tui.toml` 被还原或被 `/reload-tui` 之外的手段改回、脚本被改坏 | 按第 7 步重装（补丁脚本幂等）；**`/reload-tui` 当场生效**，不用重启会话。Windows 上若只是 footer 没行/数字冻住，先看 `~/.kimi-code/statusline/daemon.heartbeat` 与 `daemon.log`——守护进程死了热路径下一次 tick（≤5 秒）会自动拉起 |
+| `状态栏守护脚本一致性 … 有漂移` | 改了 `assets/statusline-daemon.pyw` 但没重新部署 | `cp "$SKILL_DIR/assets/statusline-daemon.pyw" ~/.kimi-code/`，再杀掉 pythonw 让守护进程重启（下一次 tick 自动拉起） |
 | `触发链：…` WARN | skill **既不在 `~/.kimi-code/skills/`、`~/.kimi-code/AGENTS.md` 里也没有指路**——表现是「skill 突然不生效」 | 把目录拷进 `~/.kimi-code/skills/kimi-code-setup/`，或在 `AGENTS.md` 里加一条含 "kimi-code-setup" 字样的触发约定（见「这个目录放在哪、怎么用」） |
 | `kimi doctor` 非 0 | `config.toml` / `tui.toml` 连 CLI 都读不进去（手改出语法错 / 补丁脚本被绕过） | `patch-config.py check` 只看结构，doctor 是"CLI 能否真的读进去"的最终判据；对照 `.bak` 还原或按对应章节重跑补丁脚本 |
 | `补丁脚本行为 … FAIL` | skill 里的 `patch-config.py` 被改坏（幂等 / 复验 / 删除逻辑） | 它是一切改配置动作的底座，先用备份或重新拷 skill 副本修好它，再动别的 |

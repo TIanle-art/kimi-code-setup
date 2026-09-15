@@ -284,9 +284,7 @@ PANEL_HTML = """<!doctype html>
       cache.textContent = (d.cache == null) ? '\u2014' : d.cache + '%';
       cache.style.color = paint(d.cache);
       document.getElementById('bal').textContent = d.balance || '\u2014';
-      var text = String(d.text || '');
-      var i = text.indexOf('cached');
-      document.getElementById('detail').textContent = i >= 0 ? text.slice(i) : text;
+      document.getElementById('detail').textContent = String(d.text || '');
       document.getElementById('err').textContent = d.ok ? '' : ('桥报错：' + (d.error || '未知'));
     }).catch(function (e) {
       document.getElementById('err').textContent = '桥不可用：' + e;

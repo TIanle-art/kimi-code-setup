@@ -78,21 +78,6 @@ def state_path(name):
     return os.path.join(STATE_DIR, re.sub(r"[^A-Za-z0-9_.-]", "_", name) + ".json")
 
 
-def format_tokens(n):
-    n = int(n or 0)
-    if n >= 1024 * 1024:
-        return _trim(n / (1024.0 * 1024)) + "M"
-    if n >= 1024:
-        k = n / 1024.0
-        return (str(int(round(k))) if k >= 100 else _trim(k)) + "k"
-    return str(n)
-
-
-def _trim(value):
-    text = "%.1f" % value
-    return text[:-2] if text.endswith(".0") else text
-
-
 # ---------------------------------------------------------------- session usage
 
 
@@ -373,18 +358,6 @@ def cache_segment(totals):
     return "%s %s" % (dim("cache"), color(tone, bold("%d%%" % rate)))
 
 
-def token_detail(totals):
-    values = usage_totals(totals)
-    if values is None:
-        return None
-    read, write, other, _total = values
-    detail = ["cached " + format_tokens(read)]
-    if write > 0:
-        detail.append("written " + format_tokens(write))
-    detail.append("uncached " + format_tokens(other))
-    return dim(" \u00b7 ".join(detail))
-
-
 def location_segment(payload):
     cwd = payload.get("cwd") or ""
     if not cwd:
@@ -413,9 +386,6 @@ def build_line(payload):
     if segment:
         parts.append(segment)
     segment = balance_label(None, payload)
-    if segment:
-        parts.append(segment)
-    segment = token_detail(totals)
     if segment:
         parts.append(segment)
     segment = location_segment(payload)

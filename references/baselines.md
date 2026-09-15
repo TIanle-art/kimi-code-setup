@@ -26,10 +26,10 @@
 
 ## Windows 11 实测基线（2026-09-16，kimi-code 0.43.1，Store 版 Python 3.13，非管理员账户）—— ✅ 现行
 
-- `verify.py`（2026-09-16 复跑，本机 kimi-code 0.43.1）：**38 项通过 / 0 项告警 / 0 失败**；`--e2e` **40 项通过 / 0 项告警 / 0 失败**（真实搜索走桥成功，`bridge.log` 8007 → 9761 字节）。**「脚本漂移」这两项会随正本更新而复现**：skill 副本一改、机器上还跑着旧版，它俩就各报一条告警（把 `exa-bridge.py` / `statusline.py` 重新部署后归零——本轮就是从 36/2/0 走到 38/0/0 的）。本轮新增的「直打桥抓取 → 200」「两处 `services.*.api_key` 一致」两项当场 PASS。
+- `verify.py`（2026-09-16 复跑，本机 kimi-code 0.43.1）：**39 项通过 / 0 项告警 / 0 失败**；`--e2e` **41 项通过 / 0 项告警 / 0 失败**（真实搜索走桥成功，`bridge.log` 10268 → 12022 字节）。**「脚本漂移」几项会随正本更新而复现**：skill 副本一改、机器上还跑着旧版，它们就各报一条告警（把 `exa-bridge.py` / `statusline.py` / `statusline-daemon.pyw` 重新部署后归零）。本轮变更：状态栏改走「热路径 `statusline-fast.exe` + 守护进程 `statusline-daemon.pyw`」（体检新增「command 走热路径时三件套齐全」与「状态栏守护脚本一致性」两项检查）；状态行去掉 `cached … · uncached …` 明细段（`format_tokens` / `token_detail` 一并删除）。
 - 工具清单项是"最近 3 个会话快照的并集"，因为 `kimi -p` 有时在 MCP 握手前就拍快照。
-- `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`）。
-- 钩子 / 状态栏命令都写成 `python3 C:/Users/<你>/.kimi-code/...`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。
+- `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`），另加 `[status_line].command = "C:/Users/<你>/.kimi-code/statusline-fast.exe"`（Windows 热路径）。
+- 钩子命令写成 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。**状态栏不再直连 Python**：本机实测同步跑 Python 空闲 ≈240ms、忙时 400ms+，300ms 预算站不住（runner 超时即 `taskkill /T /F` 丢结果）；改走热路径 exe（**44–73ms**，runner 复刻 12 连测全过）+ 守护进程，详见 `references/statusline.md`。
 - 常驻：启动文件夹快捷方式 `kimi-exa-bridge.lnk` → `pythonw.exe "%USERPROFILE%\.kimi-code\exa-bridge\launch.pyw"`（计划任务被非管理员权限拒、`HKCU\...\Run` 被火绒回滚，见 `references/web-tools-exa.md`）。桥日志照常落在 `%USERPROFILE%\.kimi-code\exa-bridge\bridge.log`。
 - kimi-cu（computer-use）：**全部走官方下载**——Windows 侧是官方 runtime（`setup_windows.ps1` → `%LOCALAPPDATA%\KimiCU\`）+ 官方插件（`/plugins install …/kimi-cu-win-plugin.zip`；2026-09-16 实机切换完成，v0.2.17 落在 `~/.kimi-code/plugins/managed/kimi-cu-win/`，`plugins/installed.json` 记 `enabled: true`）；kimi-code 自己内置了这个能力的安装器（`kimiCu.ts`），会顺手**移除旧的 `mcp.json` 手写注册**。插件自带 MCP 声明 `mcpServers.win`（`cmd.exe` + `bin\kimi-cu-mcp.cmd`，cwd 是插件根，13 个 enabledTools），所以**工具名是 `mcp__plugin-kimi-cu-win_win__*`**，不再是 `mcp__kimi-cu__*`；`mcp.json` 里**已无** kimi-cu 条目。**两条路互斥**（并存＝两个实例抢键鼠）：`verify.py` 的 MCP 检查专门拦这一条（实测会报 FAIL），切换顺序是「先装插件 → 再删手写条目 → 最后 `/reload` 或新开会话」。
 

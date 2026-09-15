@@ -654,8 +654,8 @@ def check_statusline(home):
         text = tui.read_text(encoding="utf-8", errors="replace")
         if err.startswith("TOML 解析失败"):
             add("FAIL", "状态栏：tui.toml %s" % err)
-        elif "statusline.py" in text:
-            add("PASS", "状态栏：tui.toml 里配了 statusline.py（%s）" % err)
+        elif "statusline" in text:
+            add("PASS", "状态栏：tui.toml 里配了自定义状态栏命令（%s）" % err)
         else:
             add("WARN", "状态栏：tui.toml 里没有 [status_line] 配置（%s）" % err)
         return
@@ -664,16 +664,23 @@ def check_statusline(home):
     if not command:
         add("WARN", "状态栏：没配 [status_line].command —— footer 走内置布局（见 SKILL.md 第 7 步）")
         return
-    if "statusline.py" not in command:
+    if "statusline-fast" in command:
+        add("PASS", "状态栏：command = %s（Windows 热路径 + 守护进程）" % command[:120])
+        missing = [name for name in ("statusline-fast.exe", "statusline-daemon.pyw", "statusline.py")
+                   if not (home / name).exists()]
+        if missing:
+            add("FAIL", "状态栏：command 走热路径，但本机缺 %s（见 SKILL.md 第 7 步）" % "、".join(missing))
+    elif "statusline.py" in command:
+        add("PASS", "状态栏：command = %s" % command)
+        if not (home / "statusline.py").exists():
+            add("FAIL", "状态栏：command 指向 statusline.py，但 %s 不存在" % (home / "statusline.py"))
+    else:
         add("INFO", "状态栏：command 指向别的脚本：%s" % command[:90])
         return
-    add("PASS", "状态栏：command = %s" % command)
     script = home / "statusline.py"
-    if not script.exists():
-        add("FAIL", "状态栏：command 指向 statusline.py，但 %s 不存在" % script)
-        return
-    ok, detail = statusline_behaves(script)
-    add("PASS" if ok else "FAIL", "状态栏脚本行为：%s" % detail)
+    if script.exists():
+        ok, detail = statusline_behaves(script)
+        add("PASS" if ok else "FAIL", "状态栏脚本行为：%s" % detail)
 
 
 def check_doctor():
@@ -779,6 +786,14 @@ def check_assets(skill_dir, home):
             "状态栏脚本一致性：skill=%s 本机=%s%s" % (sa, sb, "" if sa == sb else " —— 有漂移，改完记得两边同步"))
     elif ssrc.exists() and not sdst.exists():
         add("WARN", "状态栏脚本：本机没装 %s（SKILL.md 第 7 步还没做？）" % sdst)
+    dsrc = Path(skill_dir) / "assets" / "statusline-daemon.pyw"
+    ddst = home / "statusline-daemon.pyw"
+    if dsrc.exists() and ddst.exists():
+        da, db = sha12(dsrc), sha12(ddst)
+        add("PASS" if da == db else "WARN",
+            "状态栏守护脚本一致性：skill=%s 本机=%s%s" % (da, db, "" if da == db else " —— 有漂移，改完记得两边同步"))
+    elif dsrc.exists() and not ddst.exists():
+        add("INFO", "状态栏守护脚本：本机没装 %s（Windows 装法见 SKILL.md 第 7 步；macOS / Linux 不需要）" % ddst)
 
 
 def check_trigger_chain(home):

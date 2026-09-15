@@ -122,9 +122,7 @@
     cacheVal.textContent = (data.cache == null) ? '—' : data.cache + '%';
     cacheVal.style.color = cacheColor(data.cache);
     balVal.textContent = data.balance || '—';
-    const text = String(data.text || '');
-    const i = text.indexOf('cached');
-    detail.textContent = i >= 0 ? text.slice(i) : text;
+    detail.textContent = String(data.text || '');
   }
 
   function pump(data) {
