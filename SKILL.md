@@ -263,6 +263,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
 
 - 缓存率从会话日志 `agents/main/wire.jsonl` 的 `usage.record` 累计（与 `/usage` 面板同源），余额走 provider 的余额接口、缓存 5 分钟后台刷新；脚本主路径 macOS ~50ms、**Windows 实测 156ms（经 `cmd.exe`，惰性导入 `urllib.request`/`subprocess` 之后；改之前 244ms）**，而 kimi-code 给的上限是 300ms，失败/超时自动回落内置布局。
 - Windows（2026-09-16 实测：Windows 11 + kimi-code 0.43.1）：脚本放 `%USERPROFILE%\.kimi-code\`，命令写 `python3 C:/Users/<你>/.kimi-code/statusline.py`——正斜杠绝对路径，cmd.exe 与 Git Bash 都能跑（`~` 不展开；`%USERPROFILE%` 只在 cmd 里展开）。**别照搬 `py -3`**：Store 版 Python 不带 `py` 启动器，先 `where python` 看一眼。300ms 余量很薄，别把重依赖加回脚本顶部。
+- **Windows 上这脚本还顺手兜底桥**（2026-09-16 加）：同一条命令会探活 exa-bridge，拒连就自动拉起（门闩是 runner 注入的 `KIMI_CODE_STATUS_LINE=1`，手动跑/体检自测不触发；实测杀掉桥 2 秒内自愈）。也就是说它不再只是"显示"——细节、开销与边界都在 `references/statusline.md` 已知边界。
 - 判据：`verify.py` 的状态栏几项全 PASS（含脚本行为自测）；`/reload-tui` 后 footer 第一行出现 `cache N%`（**Windows 2026-09-16 截屏复核过**：footer 第一行渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新）。
 - 自定义行会**整体替换** footer 第一行（脚本复刻了模式徽章 / 模型名 / cwd / git 分支，另加缓存率与余额）——想回到内置槽位就注释掉 `command`。机制、排错表、回滚、已知边界都在 `references/statusline.md`。
 
@@ -307,7 +308,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 |------|------|--------|
 | `出网不通` / `代理出口不通` | 网络 / 代理层问题，**不是 kimi-code 的错**——体检脚本会替你区分"要走代理的域名全超时但直连正常"（=代理出口挂了）和"整机没网" | 代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；恢复后重试即可，不用改配置。细节见 `references/web-tools-exa.md` 排错表 |
 | `services.*` 缺失或指向 Kimi 托管 | 大概被 `/login` 顶掉了 | 按第 2 步用补丁脚本加回来 |
-| `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 本机走启动文件夹 → 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/web-tools-exa.md` 2.5 |
+| `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。**先等 5~10 秒**：Windows 上状态栏脚本的兜底会自己把它拉起来（实测 2 秒内自愈）；还不行再手动救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/web-tools-exa.md` 2.5 |
 | `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐，或把桥的 token 留空 |
 | `桥脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 想清楚以哪份为准，再 `cp` 过去 + 重启桥 |
 | `钩子：没有 [[hooks]]` / `没装 Todo 面板守卫` / `钩子脚本行为 … FAIL` | 第 6 步没做、规则被删、或脚本被改坏 | 按第 6 步重装（`ensure-hook` 幂等，重复跑安全）；钩子**新开会话**才生效 |

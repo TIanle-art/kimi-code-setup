@@ -11,6 +11,9 @@ kimi-code 只给 300ms，因此：
 - 余额走本地缓存，真实请求交给 detached 子进程（--refresh-balance），主路径不联网；
 - 顶部只导入轻量模块：urllib.request 与 subprocess 都在真正用到时才导入。Windows 上
   这两个模块合计要烧掉约 130ms 启动时间，惰性导入后主路径从 ~200ms 降到 ~110ms。
+- Windows 附加：同一条命令顺手给 exa-bridge 探活（见 watch_bridge()）——桥被杀过两次，
+  而启动文件夹的自启不会拉活（launchd / systemd 会）；只在 runner 调用时生效、30 秒最多
+  一次、只做 TCP connect，不占 300ms 预算的大头。
 
 命令行：python3 ~/.kimi-code/statusline.py [--refresh-balance <provider>]
 """
@@ -415,6 +418,88 @@ def build_line(payload):
     return "  ".join(parts)
 
 
+# --- exa-bridge 兜底（Windows）------------------------------------------------
+# 桥被杀过两次（见 skill 的 references/web-tools-exa.md 2.5），而启动文件夹的自启不会把
+# 它拉活（macOS 的 launchd / Linux 的 systemd 都会）。这条命令在会话里每秒跑一次，顺手
+# 探活最省事：只做 TCP connect（不发请求、不读响应），拒连就 detached 拉起。
+BRIDGE_WATCH_INTERVAL_S = 30
+BRIDGE_RELAUNCH_COOLDOWN_S = 60
+BRIDGE_PROBE_TIMEOUT_S = 0.05
+
+
+def bridge_endpoint():
+    """桥的 host:port 取自 config.toml 的 services.moonshot_search.base_url，取不到用默认。"""
+    services = load_config().get("services") or {}
+    url = (services.get("moonshot_search") or {}).get("base_url") or ""
+    match = re.search(r"//([^/\s]+)", url)
+    host, _, port = (match.group(1) if match else "127.0.0.1:8787").partition(":")
+    return host or "127.0.0.1", int(port or 8787)
+
+
+def relaunch_bridge():
+    """拉起桥：优先直接跑 launch.pyw，没有才退回启动文件夹里的快捷方式。
+
+    两条路等价（快捷方式就是 pythonw.exe 跑同一个 launch.pyw），但 ShellExecute 走快捷
+    方式实测 ~240ms、Popen 只要 ~34ms——这条命令一秒一次、总共只有 300ms 预算，能省就省。
+    """
+    import subprocess
+
+    launch = os.path.join(KIMI_HOME, "exa-bridge", "launch.pyw")
+    try:
+        if os.path.exists(launch):
+            subprocess.Popen([sys.executable, launch],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL, close_fds=True,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            return "launch.pyw"
+        lnk = os.path.join(os.environ.get("APPDATA") or "", "Microsoft", "Windows",
+                           "Start Menu", "Programs", "Startup", "kimi-exa-bridge.lnk")
+        if os.path.exists(lnk):
+            os.startfile(lnk)                       # 退路：等价于双击那个快捷方式
+            return "shortcut"
+    except Exception:
+        pass
+    return None
+
+
+def watch_bridge():
+    """Windows 兜底：桥挂了就拉起来。节流，且只在 runner 调用时生效——手动跑不误触发。
+
+    门闩用 KIMI_CODE_STATUS_LINE：那是 kimi-code 的 status line runner 给子进程注入的
+    环境变量，所以 verify.py 的状态栏行为自测、手工调试都不会顺带把桥拉起来。
+    """
+    if os.name != "nt" or os.environ.get("KIMI_CODE_STATUS_LINE") != "1":
+        return
+    import socket
+
+    now = time.time()
+    path = state_path("bridge-watch")
+    state = read_state(path)
+    if now - float(state.get("checked") or 0) < BRIDGE_WATCH_INTERVAL_S:
+        return
+    state["checked"] = now
+    try:
+        host, port = bridge_endpoint()
+    except Exception:
+        host, port = "127.0.0.1", 8787
+    try:
+        socket.create_connection((host, port), timeout=BRIDGE_PROBE_TIMEOUT_S).close()
+        state["last_ok"] = now
+        state.pop("last_error", None)
+        state.pop("relaunched", None)
+        write_state(path, state)
+        return
+    except Exception as exc:
+        state["last_error"] = "%s: %s" % (type(exc).__name__, exc)
+    relaunch = now - float(state.get("relaunched") or 0) >= BRIDGE_RELAUNCH_COOLDOWN_S
+    if relaunch:
+        state["relaunched"] = now
+    write_state(path, state)        # 先落盘：拉起动作可能被 runner 的 300ms 超时打断，
+    if relaunch:                    # 冷却时间写不进去就会变成每秒重试拉起
+        state["relaunch_mode"] = relaunch_bridge()
+        write_state(path, state)
+
+
 def main():
     if "--refresh-balance" in sys.argv:
         index = sys.argv.index("--refresh-balance")
@@ -433,6 +518,11 @@ def main():
         return 0
     if line:
         sys.stdout.write(line + "\n")
+        try:
+            sys.stdout.flush()                      # 先把第一行送出去，再做兜底探活
+        except Exception:
+            pass
+    watch_bridge()
     return 0
 
 

@@ -77,6 +77,7 @@ echo '{"model":"X","cwd":"'$HOME'","permissionMode":"yolo","sessionId":"session_
 - Windows 实测（kimi-code 0.43.1 + Store 版 Python 3.13，2026-09-16）：脚本输出正确（`cache 95%`、余额走 DeepSeek `/user/balance` 拿到 ¥39.25），后台刷新子进程正常；耗时直连 200ms → 惰性导入后 **113ms**，经 `cmd.exe` 244ms → **156ms**。
 - **Windows footer 渲染（2026-09-16 截屏复核，同一台）**：footer 第一行确实渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新——这条以前写的是"没在这一台复核"，现在补上了。链路构成（本机实测）：`cmd.exe /d /s /c` + Store 版 Python 启动 ≈165ms，脚本自身 ≈40ms（import 12.5 + `load_config` 14.6 + usage 扫描 6.3 + 组行 3~10），合计 ~200ms，300ms 预算只剩三成余量。
 - **超时是静默的，且跟机器忙不忙强相关**：runner 的 300ms 从 spawn 起算，超时就 `taskkill /T /F` 丢掉这次结果、回落内置布局，下一次成功再切回来——所以"footer 一直没出现 `cache N%`"时要先看当时机器是不是在跑重活（大量并行子进程会把 165ms 的启动开销顶过 300ms），别只怀疑脚本。想确认 TUI 到底有没有在调，可以在命令外面套一层探针脚本记录调用时刻（**实测 1 次/秒**）；runner 会给子进程注入 `KIMI_CODE_STATUS_LINE=1`，用它区分"runner 在调"和"别的东西在调"。
+- **Windows 附加职责：顺手给 exa-bridge 兜底（2026-09-16 加的，已实测自愈）**。桥被杀过两次（见 `references/web-tools-exa.md` 2.5），而启动文件夹的自启不会拉活（macOS 的 launchd / Linux 的 systemd 都会），所以让这条一秒一次的命令顺手探活：只做 TCP `connect`（**不发请求、不读响应**），30 秒最多一次；拒连就 `Popen` 拉起 `exa-bridge/launch.pyw`（实测 34ms；退路才是跑启动文件夹快捷方式，ShellExecute 要 ~240ms），冷却 60 秒，且**先落盘再拉起**（拉起可能被 runner 的 300ms 超时打断，冷却写不进去就会变成每秒重试）。**门闩是 `KIMI_CODE_STATUS_LINE=1`**——只有 runner 调用时才生效，`verify.py` 的行为自测、手工调试都不会误拉起（已用隔离测试验过门闩/节流/冷却/落盘四件事）。开销：桥在跑时每次调用多 ~1ms；桥挂着时多 ~50ms（本机连本机拒连端口实测是 `TimeoutError` 而不是 refused），都远在 300ms 预算内。边界：**只在 kimi 会话活着时有效**——关掉 kimi 就没有守护，而那正是搜索用不上的时候。
 
 ## 回滚
 
