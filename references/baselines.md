@@ -26,7 +26,7 @@
 
 ## Windows 11 实测基线（2026-09-16，kimi-code 0.43.1，Store 版 Python 3.13，非管理员账户）—— ✅ 现行
 
-- `verify.py`（2026-09-16 复跑，本机 kimi-code 0.43.1）：**39 项通过 / 0 项告警 / 0 失败**；`--e2e` **41 项通过 / 0 项告警 / 0 失败**（真实搜索走桥成功，`bridge.log` 10268 → 12022 字节）。**「脚本漂移」几项会随正本更新而复现**：skill 副本一改、机器上还跑着旧版，它们就各报一条告警（把 `exa-bridge.py` / `statusline.py` / `statusline-daemon.pyw` 重新部署后归零）。本轮变更：状态栏改走「热路径 `statusline-fast.exe` + 守护进程 `statusline-daemon.pyw`」（体检新增「command 走热路径时三件套齐全」与「状态栏守护脚本一致性」两项检查）；状态行去掉 `cached … · uncached …` 明细段（`format_tokens` / `token_detail` 一并删除）。
+- `verify.py`（2026-09-16 复跑，本机 kimi-code 0.43.1）：**39 项通过 / 0 项告警 / 0 失败**；`--e2e` **41 项通过 / 0 项告警 / 0 失败**（真实搜索走桥成功，`bridge.log` 10268 → 12022 字节）。**「脚本漂移」几项会随正本更新而复现**：skill 副本一改、机器上还跑着旧版，它们就各报一条告警（跑一条 `python3 assets/deploy.py` 就归零）。本轮变更：状态栏改走「热路径 `statusline-fast.exe` + 守护进程 `statusline-daemon.pyw`」（体检新增「command 走热路径时三件套齐全」与「状态栏守护脚本一致性」两项检查）；状态行去掉 `cached … · uncached …` 明细段（`format_tokens` / `token_detail` 一并删除）。
 - 工具清单项是"最近 3 个会话快照的并集"，因为 `kimi -p` 有时在 MCP 握手前就拍快照。
 - `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`），另加 `[status_line].command = "C:/Users/<你>/.kimi-code/statusline-fast.exe"`（Windows 热路径）。
 - 钩子命令写成 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。**状态栏不再直连 Python**：本机实测同步跑 Python 空闲 ≈240ms、忙时 400ms+，300ms 预算站不住（runner 超时即 `taskkill /T /F` 丢结果）；改走热路径 exe（**44–73ms**，runner 复刻 12 连测全过）+ 守护进程，详见 `references/statusline.md`。

@@ -48,6 +48,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
 
 - **命令必须是「无引号的正斜杠绝对路径」**：runner 走 `cmd.exe /d /s /c <command>`，带引号的路径会被 `/s` 的引号处理搞坏（实测报 `'"C:\...\pythonw.exe"' is not recognized`）。
 - gcc 来自 MSYS2（`C:\msys64\mingw64\bin\gcc.exe`）；`-static` 保证 exe 不依赖 MSYS2 的 DLL。改过 `.c` 要重新编译；改 `statusline.py` / `statusline-daemon.pyw` 后杀掉 pythonw 让守护进程重启（下一次 tick 自动拉起），不用动 tui.toml。
+- 上面三条 `cp` + 一次 `gcc` 就是全部的「部署」动作——等价于一条 `python3 "$SKILL_DIR/assets/deploy.py"`（幂等：按内容比对，一致就不动；`.c` 变过或 exe 落后才重编；顺手重启守护进程。`--check` 只报告，有漂移退 2）。体检报「脚本漂移」时跑它收尾。
 - 双窗口各开一次也没问题：会话键按 cwd 分文件。
 - **`--file` 必须写在子命令前面**（argparse 的位置要求）：写成 `set … --file …` 会报 `unrecognized arguments`（实测踩过）。
 - `patch-config.py` 对 `tui.toml` 一样幂等：`[status_line]` 存在就改 `command` 的值，不存在才追加整段；写前备份、写前复验（不通过就不落盘）。**别手写追加**。
@@ -73,7 +74,7 @@ ls -la ~/.kimi-code/statusline/daemon.heartbeat
 tail -3 ~/.kimi-code/statusline/daemon.log
 ```
 
-`verify.py` 的「状态栏脚本行为」用临时 `KIMI_CODE_HOME` + 假会话日志（read 900 / uncached 100）跑一次，期望输出含 `cache 90%`（不联网）；「状态栏脚本一致性」另外比对 `statusline.py` 与 `statusline-daemon.pyw` 两份部署文件。
+`verify.py` 的「状态栏脚本行为」用临时 `KIMI_CODE_HOME` + 假会话日志（read 900 / uncached 100）跑一次，期望输出含 `cache 90%`（不联网）；「状态栏脚本一致性」比对 `statusline.py`、「状态栏守护脚本一致性」比对 `statusline-daemon.pyw`——两者都是 skill 副本 vs 部署副本，报漂移就跑 `assets/deploy.py`。
 
 ## web 端（kimi web）也能看
 
