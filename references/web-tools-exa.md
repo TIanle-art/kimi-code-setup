@@ -62,6 +62,8 @@ cp "$SKILL_DIR/assets/exa-bridge.py" ~/.kimi-code/exa-bridge/
 chmod +x ~/.kimi-code/exa-bridge/exa-bridge.py
 ```
 
+Windows 上 `chmod` 是无操作，跳过即可——桥由 `pythonw.exe <脚本>` 拉起，不靠可执行位。
+
 ## 2. 写 config.toml（只增不覆盖）
 
 **别手动"追加"——用幂等补丁脚本**。实测坑：往 `config.toml` 末尾重复追加一个已经存在的表，会让 TOML 解析失败，kimi-code 会**丢弃整份配置**并报 `No model configured. Run /login …`（日志里没有任何线索）。所以一律走 `assets/patch-config.py`：
@@ -111,7 +113,9 @@ launchctl print gui/$(id -u)/ai.kimi.exa-bridge | head -20
 - 只改了**脚本**用 `launchctl kickstart -k gui/$(id -u)/ai.kimi.exa-bridge` 即可；
 - 脚本被 kill 后 launchd 会自动拉起（`KeepAlive`）。
 
-**Windows 11（计划任务；本文档作者只在 macOS 实测过，按标准做法写）**——PowerShell：
+**Windows 11（2026-09-16 实测：Windows 11 + kimi-code 0.43.1 + Store 版 Python 3.13，非管理员账户）**——分两步：先做第 0 步生成启动器，再按可用性从上往下挑一条常驻路。
+
+**0. 生成启动器（三条常驻路都要用）**：`pythonw.exe` 是 GUI 子系统程序、没有控制台，计划任务和启动文件夹又都塞不进环境变量——所以令牌和日志得靠一个 `.pyw` 包装器（它等价于 macOS plist 里的 `EnvironmentVariables` + `StandardErrorPath`）：
 
 ```powershell
 $skillDir = "$env:USERPROFILE\.kimi-code\skills\kimi-code-setup"   # 没拷进 skills 目录就改成实际路径
@@ -119,21 +123,55 @@ $dst = "$env:USERPROFILE\.kimi-code\exa-bridge"
 New-Item -ItemType Directory -Force -Path $dst | Out-Null
 Copy-Item "$skillDir\assets\exa-bridge.py" "$dst\exa-bridge.py" -Force
 
-python --version            # 没有就先装：winget install -e --id Python.Python.3.12
-$pyw = (Get-Command pythonw.exe).Source
+$exaKey = ''            # 留空 = 桥改读 mcp.json 的 x-api-key（推荐，省得把 key 散在三处）
+$token  = '<本地令牌>'   # 留空 = 不校验；填了就要和 config.toml 两处 [services].api_key 一致
+$tpl = Get-Content "$skillDir\assets\windows-launch.pyw.template" -Raw
+$tpl = $tpl.Replace('__SCRIPT__', "$dst\exa-bridge.py".Replace('\','/')) `
+           .Replace('__LOG__', "$dst\bridge.log".Replace('\','/')) `
+           .Replace('__EXA_API_KEY__', $exaKey).Replace('__EXA_BRIDGE_TOKEN__', $token)
+Set-Content "$dst\launch.pyw" $tpl -Encoding UTF8
 
-$action  = New-ScheduledTaskAction -Execute $pyw -Argument "`"$dst\exa-bridge.py`""
+python --version                                    # 没有就先装：winget install -e --id Python.Python.3.12
+$pyw = (Get-Command pythonw.exe).Source             # Store 版 Python 也有 pythonw；机器上没有 py 启动器不代表没有它
+Start-Process -FilePath $pyw -ArgumentList "`"$dst\launch.pyw`"" -WindowStyle Hidden   # 先手动起一次
+curl.exe -s http://127.0.0.1:8787/health            # 期望 {"ok":true,..."key":true}
+```
+
+**1. 三条常驻路**（实测结论：①②在本机被挡，③可用）：
+
+| 路 | 做法 | 实测 |
+|----|------|------|
+| ① 计划任务 | 见下方脚本 | ❌ 非管理员账户下 `Register-ScheduledTask`、`schtasks /Create`、计划任务 COM 三种写法全是 `Access is denied (0x80070005)` |
+| ② `HKCU\...\Run` | `reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v kimi-exa-bridge /t REG_SZ /d "\"$pyw\" \"$dst\launch.pyw\"" /f` | ❌ 命令报成功、**下一条命令回读就没了**——被安全软件静默回滚（本机装火绒 HIPS）；把它加进白名单后可再用 |
+| ③ 启动文件夹快捷方式 | 见下方脚本，**不需要管理员** | ✅ 本机采用；`.lnk` 落盘正常。⚠️ 2026-09-16 实测有一次重启后它**没被处理**，见下方 **2.5** |
+
+①计划任务（管理员 / 组策略允许时最标准）：
+```powershell
+$action  = New-ScheduledTaskAction -Execute $pyw -Argument "`"$dst\launch.pyw`""
 $trigger = New-ScheduledTaskTrigger -AtLogOn
-# 默认设置的两个坑（按 Windows 计划任务的通用默认行为写，未实测）：电池供电时不启动/被停、
-# 执行满 72 小时被强杀。守护进程必须显式覆盖：
+# 两个默认设置的坑（计划任务通用默认行为）：电池供电时不启动/被停、执行满 72 小时被强杀：
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 Register-ScheduledTask -TaskName "kimi-exa-bridge" -Action $action -Trigger $trigger -Settings $settings -Force
-
 Start-ScheduledTask -TaskName "kimi-exa-bridge"     # 立即起，不必重登录
 ```
 
-`pythonw.exe` 没有控制台，也就看不到脚本的 stderr 日志：排错时前台跑 `python "$dst\exa-bridge.py"`（Ctrl+C 退出）；想长期留日志就用 `.cmd` 包装（`python ... >> %USERPROFILE%\.kimi-code\exa-bridge\bridge.log 2>&1`）并把计划任务目标换成它，代价是登录后常驻一个黑窗口。
+③启动文件夹（用户级，无需提权）：
+```powershell
+$lnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'kimi-exa-bridge.lnk'
+$sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+$sc.TargetPath = $pyw
+$sc.Arguments = '"' + $dst + '\launch.pyw"'
+$sc.WorkingDirectory = $dst
+$sc.WindowStyle = 7        # 最小化，避免登录时闪一下
+$sc.Save()
+```
+
+**2. 判据（三条路相同）**：`curl.exe -s http://127.0.0.1:8787/health` 返回 `"ok":true` 且 `"key":true`；`$dst\bridge.log` 里出现 `exa-bridge listening on ...`。写完自启项**立刻回读一次**，别只信命令回显的"成功"——`Get-ScheduledTaskInfo -TaskName kimi-exa-bridge` / `reg query "HKCU\..." /v kimi-exa-bridge` / `Get-ChildItem ([Environment]::GetFolderPath('Startup'))`。
+
+**2.5 重启后桥没起来（2026-09-16 实测踩过）**：这台机器 01:07 重启、01:08 登录，之后**桥没有自己起来**——`/health` 连接被拒、`bridge.log` 里没有新横幅，而 Windows「设置 → 应用 → 启动」里那条 `pythonw.exe`（就是本快捷方式）**显示为「开」**；同一次登录里 OneDrive、TranslucentTB 等**用户级**自启项同样"标记为开却没在跑"（服务级的火绒 / RtkAudUService 正常）。**快捷方式本身是好的**：手动跑一次那个 `.lnk`，桥立刻 `listening`。另外注意：桥的进程名是 **`pythonw3.13`**（Store 版 Python 的真名），`Get-Process pythonw` 查不到它，别据此判定"桥没在跑"——只认 `/health`。所以碰到"重启后 WebSearch 全挂"按这个顺序：① `verify.py` 或 `curl /health` 确认桥不在；② 直接跑一次快捷方式；③ 只有重现失败才去查配置。
+
+**3. 排错**：`.pyw` 起不来时用 `python.exe`（不是 pythonw）前台跑同一个 `launch.pyw`，日志会同时打到终端（Ctrl+C 退出）；端口被占就在启动器里加一行 `os.environ.setdefault("EXA_BRIDGE_PORT", "8788")`，并同步改 `config.toml` 两处 `base_url`。
 
 **Linux（systemd 用户单元；本文档作者未在 Linux 上实测，按标准做法写）**：
 
@@ -197,15 +235,17 @@ python3 "$S/patch-config.py" unset services.moonshot_fetch.base_url
 python3 "$S/patch-config.py" unset services.moonshot_fetch.api_key
 ```
 
-（或整份还原改动前的备份。）然后停常驻：macOS `launchctl bootout gui/$(id -u)/ai.kimi.exa-bridge` 并删 plist；Windows `Unregister-ScheduledTask -TaskName "kimi-exa-bridge" -Confirm:$false`；Linux `systemctl --user disable --now ai.kimi.exa-bridge` 并删 `~/.config/systemd/user/ai.kimi.exa-bridge.service` → 删 `~/.kimi-code/exa-bridge/` → 新开 kimi 进程生效。内置工具回到 Kimi 托管服务。
+（或整份还原改动前的备份。）然后停常驻——先杀掉正在跑的桥（PowerShell：`Stop-Process -Id (Get-NetTCPConnection -LocalPort 8787 -State Listen).OwningProcess -Force`），再删自启项：macOS `launchctl bootout gui/$(id -u)/ai.kimi.exa-bridge` 并删 plist；**Windows 按当初走的是哪条路删哪条**——计划任务 `Unregister-ScheduledTask -TaskName "kimi-exa-bridge" -Confirm:$false`、注册表 `reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v kimi-exa-bridge /f`、启动文件夹 `Remove-Item (Join-Path ([Environment]::GetFolderPath('Startup')) 'kimi-exa-bridge.lnk')`；Linux `systemctl --user disable --now ai.kimi.exa-bridge` 并删 `~/.config/systemd/user/ai.kimi.exa-bridge.service` → 删 `~/.kimi-code/exa-bridge/` → 新开 kimi 进程生效。内置工具回到 Kimi 托管服务。
 
 ## 排错速查
 
 | 症状 | 原因 | 处理 |
 |------|------|------|
-| `WebSearch` 直接报连接错误 | 桥没在跑 | `curl 127.0.0.1:8787/health`；macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`，Windows `Get-ScheduledTaskInfo -TaskName kimi-exa-bridge`，Linux `systemctl --user status ai.kimi.exa-bridge` |
+| `WebSearch` 直接报连接错误 | 桥没在跑 | `curl 127.0.0.1:8787/health`；macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 按当初走的路查**——计划任务 `Get-ScheduledTaskInfo -TaskName kimi-exa-bridge`、注册表 `reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v kimi-exa-bridge`、启动文件夹 `Get-ChildItem ([Environment]::GetFolderPath('Startup'))`；Linux `systemctl --user status ai.kimi.exa-bridge` |
+| Windows：计划任务建不了（`Access is denied`，`0x80070005`） | 非管理员账户或被组策略挡住（实测：cmdlet / `schtasks` / COM 三路全拒） | 改用启动文件夹快捷方式（第 3 节 ③），不需要提权 |
+| Windows：`HKCU\...\Run` 写入报成功、回读却没有 | 安全软件静默回滚自启项（本机火绒 HIPS 实测） | 加白名单，或直接用启动文件夹；**写完必须回读**——`reg add` 回显的"成功"不可信 |
 | 桥活着，但搜索报 `URLError` / `SSL: UNEXPECTED_EOF_WHILE_READING`；体检显示"出网不通" | **代理没把 `api.exa.ai` 放出去**（2026-09 实测过一次：DeepSeek 通、Exa 不通，10s 超时） | 先 `curl -sS -o /dev/null -w '%{http_code}\n' https://api.exa.ai`：`000`/超时 = 网络层 → 打开代理软件——**换节点 / 更新订阅 / 确认规则没把 `api.exa.ai` 和 `mcp.exa.ai` 设成 DIRECT**；401 或 200 = 通的，再查别的原因。恢复后直接重试，**不用改任何配置** |
-| 关掉 TUN、改成"只在终端 `export HTTPS_PROXY=…`"之后，后台的桥突然连不上 | launchd / 计划任务 / systemd 拉起的进程**不继承你 shell 里的环境变量** | 在 plist 的 `EnvironmentVariables` 里显式加 `HTTPS_PROXY`（必要时 `HTTP_PROXY`；建议同时加 `NO_PROXY=127.0.0.1,localhost`），再 `bootout` + `bootstrap`；Windows 用 `.cmd` 包一层 `set HTTPS_PROXY=…`，或设成系统环境变量；Linux 在 unit 里加 `Environment=HTTPS_PROXY=…`（同样建议 `NO_PROXY=127.0.0.1,localhost`），再 `daemon-reload` + `restart` |
+| 关掉 TUN、改成"只在终端 `export HTTPS_PROXY=…`"之后，后台的桥突然连不上 | launchd / 计划任务 / systemd 拉起的进程**不继承你 shell 里的环境变量** | 在 plist 的 `EnvironmentVariables` 里显式加 `HTTPS_PROXY`（必要时 `HTTP_PROXY`；建议同时加 `NO_PROXY=127.0.0.1,localhost`），再 `bootout` + `bootstrap`；Windows 把启动器模板里那两行注释掉的 `os.environ.setdefault("HTTPS_PROXY", …)` 取消注释（等同 plist 的做法），或设成系统环境变量；Linux 在 unit 里加 `Environment=HTTPS_PROXY=…`（同样建议 `NO_PROXY=127.0.0.1,localhost`），再 `daemon-reload` + `restart` |
 | `FetchURL` 报 `WEB_PRIVATE_ADDRESS` | 桥挂了 → CLI 静默回落本地直连，撞 fake-IP 代理 | 先把桥救活；这错误**不代表** Exa 有问题 |
 | 桥返回 `401 unauthorized` | `config.toml` 的 `api_key` 与 `EXA_BRIDGE_TOKEN` 不一致 | 两边改成同一个值；或把脚本的 token 留空 |
 | 401 之后的请求莫名 `400 Bad request syntax` | 旧脚本没读完 401 的请求体 | 换用 skill 里的 `assets/exa-bridge.py`（已修） |

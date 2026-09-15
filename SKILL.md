@@ -10,7 +10,7 @@ metadata:
 
 **这个 skill 管的是"把一台新机器上刚下载的 kimi-code 配到能用"，不是修 bug**——排错只是收尾的一环。细则按主题放在 `references/`，本文件只留主流程、判据和索引；手上的脚本放在 `assets/`。
 
-> **验证版本**：下面所有事实（配置字段、权限模式文案、迁移行为、脚本契约）都实测于 **kimi-code 0.41.0，2026-09-15**。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
+> **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法、kimi-cu 入口实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**，实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
 
 ## 这个目录放在哪、怎么用
 
@@ -20,6 +20,13 @@ metadata:
   ```bash
   rsync -a --delete --exclude=.git ~/Desktop/kimi-code-setup/ ~/.kimi-code/skills/kimi-code-setup/
   python3 ~/Desktop/kimi-code-setup/assets/verify.py | tail -3
+  ```
+
+  Windows 上没有 rsync（Git Bash 一般也不带），等价做法是 `robocopy` 或 `cp -r`，同步完照样用 `diff -rq --exclude=.git 旧目录 新目录` 核对：
+
+  ```powershell
+  robocopy "$env:USERPROFILE\Desktop\kimi-code-setup" "$env:USERPROFILE\.kimi-code\skills\kimi-code-setup" /MIR /XD .git /NFL /NDL
+  python "$env:USERPROFILE\Desktop\kimi-code-setup\assets\verify.py" | Select-Object -Last 3
   ```
 - **要用在别的机器上**：把整个目录拷到目标机器的 `~/.kimi-code/skills/kimi-code-setup/`（Windows：`%USERPROFILE%\.kimi-code\skills\kimi-code-setup\`），那里新开的 kimi 会话就会自动发现它；不拷也行，直接把文件带过去让 agent 读。
 - **本机想临时当 skill 用**：`kimi --skills-dir ~/Desktop --skills-dir ~/.kimi-code/skills`（实测：`--skills-dir` 会**替换**自动发现的目录，所以要补上原来的 `~/.kimi-code/skills` 才不丢 `kimi-webbridge` / `markitdown`；它按整棵子树递归扫描，指到桌面会把 `桌面/开源工具/` 下的 170+ 个 skill 一起带进来，很吵）。更省事的是让 agent 直接读本文件。
@@ -32,6 +39,7 @@ metadata:
 | `assets/exa-bridge.py` | 内置 WebSearch / FetchURL 的适配器（转调 Exa），部署到 `~/.kimi-code/exa-bridge/`；本文件里的副本 = 机器上在跑的那份 |
 | `assets/launchagent.plist.template` | macOS LaunchAgent 模板（占位符替换，别手写 XML） |
 | `assets/systemd-user.service.template` | Linux systemd 用户单元模板（同一套占位符；未实测） |
+| `assets/windows-launch.pyw.template` | Windows 桥启动器模板（给 `pythonw.exe` 用）：替桥写进 `EXA_BRIDGE_TOKEN` / `EXA_API_KEY`，并把 stdout/stderr 重定向到 `bridge.log`——计划任务与启动文件夹都塞不进环境变量，`pythonw` 又没有控制台。部署到 `~/.kimi-code/exa-bridge/launch.pyw`，见 `references/web-tools-exa.md` 第 3 节（Windows） |
 | `assets/todo-panel-guard.py` | Stop 钩子：Todo 面板里的任务全部 `done` 却没清空时，拦下回合结束并提示先清空；部署到 `~/.kimi-code/hooks/`，见第 6 步 |
 | `assets/statusline.py` | footer 状态栏：常显整个会话的缓存命中率与 provider 余额；部署到 `~/.kimi-code/`，靠 `tui.toml` 的 `[status_line]` 挂上，见第 7 步 |
 | `assets/kimi-web-status.user.js` | 浏览器用户脚本（Tampermonkey）：把 cache/bal 显示在 `kimi web` 页面角落，数据来自桥的 `/status`；见 `references/statusline.md`「web 端」 |
@@ -44,8 +52,8 @@ metadata:
 |---|------|-----------|----------|
 | 0 | 装好 kimi-code + 摸清现状 + 备份 | `kimi --version` 有输出；知道配置目录、有没有配过 | 本文 |
 | 1 | LLM provider、模型与思考强度 | 新进程里能正常对话、思考强度符合预期 | 本文 |
-| 2 | 内置 WebSearch / FetchURL → 自己的 Exa | 三层验证全过 | `references/web-tools-exa.md` |
-| 3 | MCP 通道（exa + kimi-cu） | 工具清单里出现 `mcp__exa__*` 与 `mcp__kimi-cu__*` | 本文 |
+| 2 | 内置 WebSearch / FetchURL → 自己的 Exa | 三层验证全过；Windows 上自启项写完要回读确认（见细则第 3 节） | `references/web-tools-exa.md` |
+| 3 | MCP 通道（exa + kimi-cu） | 工具清单里出现 `mcp__exa__*` 与 `mcp__kimi-cu__*`；kimi-cu 在 Windows 上走官方插件（见下） | 本文 |
 | 4 | 权限模式（Ask When Needed）与工具开关 | 启动就是期望的模式、工具没被 disabled | 本文 |
 | 5 | 策略文件 AGENTS.md | 模型知道何时用哪条通道；任务清单那三条约定也在里面 | 本文 |
 | 6 | Todo 面板守卫（Stop 钩子 + 约定） | 攻击性用例被拦下（`verify.py` 钩子项 PASS + 一次 `kimi -p` 实测） | `references/todo-panel-guard.md` |
@@ -150,7 +158,7 @@ effort = "max"                              # 全局兜底强度，其它模型�
 
 ### 2. 内置联网工具 → 自己的 Exa
 
-一句话：放脚本（`$SKILL_DIR/assets/exa-bridge.py`）→ 用 `assets/patch-config.py` 写两段 `[services.*]` → 起常驻（macOS launchd / Windows 计划任务 / Linux systemd user unit）→ 三层验证。
+一句话：放脚本（`$SKILL_DIR/assets/exa-bridge.py`）→ 用 `assets/patch-config.py` 写两段 `[services.*]` → 起常驻（macOS launchd / Windows 计划任务·`HKCU\...\Run`·启动文件夹三选一 / Linux systemd user unit）→ 三层验证。
 
 **别手动往 config.toml 追加配置**（实测坑：重复追加已存在的表会让整份配置失效，报错却是 `No model configured`）——统一走补丁脚本：
 
@@ -162,7 +170,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" set services.moonshot_fetch.api_key 
 python3 "$SKILL_DIR/assets/patch-config.py" check
 ```
 
-**动手前必读 `references/web-tools-exa.md`**：HTTP 契约、mac / win / linux 三套常驻命令、验证命令、排错表、回滚都在那里。
+**动手前必读 `references/web-tools-exa.md`**：HTTP 契约、mac / win / linux 三套常驻命令、验证命令、排错表、回滚都在那里。Windows 实测提醒：非管理员机器上计划任务会 `Access is denied`、`HKCU\...\Run` 可能被安全软件静默回滚（写完立刻回读），最后一条**启动文件夹快捷方式**不需要提权；桥的令牌与日志靠 `assets/windows-launch.pyw.template` 生成的 `launch.pyw`（`pythonw` 没有控制台，不包装就没有 `bridge.log`）。
 
 ### 3. MCP 通道（默认装 exa + kimi-cu）
 
@@ -184,7 +192,10 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
 ```
 
 - **exa**：与内置通道是**同一把 Exa key、同一份额度**，但能力是超集：多 URL 批量抓取、`maxCharacters`、`numResults`/`objective`、`agent_run` 多步调研。
-- **kimi-cu（默认也装上）**：操作本机真实浏览器 / App 的 computer-use 工具（`mcp__kimi-cu__*`：截图读界面、点击、输入、滚动……）。前置条件是这台机器装了 KimiCU.app，`command` 指向它的可执行文件（本机路径见上；Windows 按其实际安装位置填，未实测）。首次调用若报权限错误，去「系统设置 → 隐私与安全性」给 KimiCU 打开辅助功能 / 屏幕录制。
+- **kimi-cu（默认也装上）**：操作本机真实浏览器 / App 的 computer-use 工具（`mcp__kimi-cu__*`：截图读界面、点击、输入、滚动……）。
+  - **macOS**：前置条件是装了 KimiCU.app，`command` 指向 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu`（上面那段 JSON 就是它）。首次调用若报权限错误，去「系统设置 → 隐私与安全性」给 KimiCU 打开辅助功能 / 屏幕录制。
+  - **Windows（2026-09-16 查证 + 实测）**：**别手写 `mcp.json`**，走官方插件——① 装 runtime：`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-RestMethod 'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1' | Invoke-Expression"`（脚本自己校验 SHA-256 + Authenticode 签名，装到 `%LOCALAPPDATA%\KimiCU\kimi-cu.exe`，并注册登录自启）；② 在 TUI 里 `/plugins install https://cdn.kimi.com/kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`（`/plugins` 是**交互式斜杠命令，`kimi -p` 里不会执行**），装完重启 kimi。插件自带 MCP 声明（`cmd /c bin\kimi-cu-mcp.cmd` → `%LOCALAPPDATA%\KimiCU\kimi-cu.exe mcp`），所以 `mcp.json` 里不该再写一条 kimi-cu，否则两个实例抢键鼠。**Windows 桌面端设置里的「Computer Use」是 macOS 专属**（`process.platform !== "darwin"` 直接返回 unsupported），找不到它是正常的。
+  - 注意：Windows 版**会短暂接管真实鼠标键盘**（不如 macOS 能稳定后台注入），且目标程序以管理员运行时 KimiCU 也要同级权限；安全软件可能拦"输入注入"，需要放行。
 - 权限：`[[permission.rules]]` + `decision = "allow"` + `pattern = "mcp__exa__*"`；**kimi-cu 别给 allow，让它按默认询问**——它会真的动你的鼠标键盘。
 - `enabled` / `startupTimeoutMs` / `toolTimeoutMs` / `enabledTools` 都可省；改完新开会话生效。
 
@@ -238,7 +249,7 @@ cp "$SKILL_DIR/assets/todo-panel-guard.py" ~/.kimi-code/hooks/
 python3 "$SKILL_DIR/assets/patch-config.py" ensure-hook Stop "python3 ~/.kimi-code/hooks/todo-panel-guard.py" --timeout 5
 ```
 
-判据：`patch-config.py check` 出现 `PASS 有 Todo 面板守卫钩子`；`verify.py` 的「钩子脚本行为」PASS（全 done → 拦、清空 → 放行）。机制、三平台写法（含 Windows 的 `py -3` 与路径转义）、端到端验证法、回滚都在 `references/todo-panel-guard.md`。**新会话生效**（钩子不热加载），装完按**第 8 步**总验收时顺手再验一次。
+判据：`patch-config.py check` 出现 `PASS 有 Todo 面板守卫钩子`；`verify.py` 的「钩子脚本行为」PASS（全 done → 拦、清空 → 放行）。机制、三平台写法（Windows 用 `python3 C:/…` 形式，已实测）、端到端验证法、回滚都在 `references/todo-panel-guard.md`。**新会话生效**（钩子不热加载），装完按**第 8 步**总验收时顺手再验一次。
 
 ### 7. 状态栏（缓存命中率 + API 余额）
 
@@ -250,9 +261,9 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
   set status_line.command "python3 ~/.kimi-code/statusline.py"
 ```
 
-- 缓存率从会话日志 `agents/main/wire.jsonl` 的 `usage.record` 累计（与 `/usage` 面板同源），余额走 provider 的余额接口、缓存 5 分钟后台刷新；脚本主路径 ~50ms，而 kimi-code 给的上限是 300ms，失败/超时自动回落内置布局。
-- Windows（**未实测**）：脚本放 `%USERPROFILE%\.kimi-code\`，命令写 `py -3 %USERPROFILE%\.kimi-code\statusline.py`——`~` 在 cmd.exe 里不展开，反斜杠交给补丁脚本转义。
-- 判据：`verify.py` 的状态栏几项全 PASS（含脚本行为自测）；`/reload-tui` 后 footer 第一行出现 `cache N%`。
+- 缓存率从会话日志 `agents/main/wire.jsonl` 的 `usage.record` 累计（与 `/usage` 面板同源），余额走 provider 的余额接口、缓存 5 分钟后台刷新；脚本主路径 macOS ~50ms、**Windows 实测 156ms（经 `cmd.exe`，惰性导入 `urllib.request`/`subprocess` 之后；改之前 244ms）**，而 kimi-code 给的上限是 300ms，失败/超时自动回落内置布局。
+- Windows（2026-09-16 实测：Windows 11 + kimi-code 0.43.1）：脚本放 `%USERPROFILE%\.kimi-code\`，命令写 `python3 C:/Users/<你>/.kimi-code/statusline.py`——正斜杠绝对路径，cmd.exe 与 Git Bash 都能跑（`~` 不展开；`%USERPROFILE%` 只在 cmd 里展开）。**别照搬 `py -3`**：Store 版 Python 不带 `py` 启动器，先 `where python` 看一眼。300ms 余量很薄，别把重依赖加回脚本顶部。
+- 判据：`verify.py` 的状态栏几项全 PASS（含脚本行为自测）；`/reload-tui` 后 footer 第一行出现 `cache N%`（**Windows 2026-09-16 截屏复核过**：footer 第一行渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新）。
 - 自定义行会**整体替换** footer 第一行（脚本复刻了模式徽章 / 模型名 / cwd / git 分支，另加缓存率与余额）——想回到内置槽位就注释掉 `command`。机制、排错表、回滚、已知边界都在 `references/statusline.md`。
 
 ### 8. 总验收
@@ -327,7 +338,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 | `[[hooks]]` | 会话启动时加载 → **新开会话**生效（当前会话不变） |
 | `mcp.json` | 有文件监听，通常会热重载；不确定就重启最稳 |
 | `tui.toml`（状态栏 / 主题 / 编辑器等） | `/reload-tui` 当场生效（`/reload` 也行） |
-| 常驻定义（launchd plist / systemd unit） | mac：`bootout` + `bootstrap`（只改脚本用 `kickstart -k`）；Linux：`systemctl --user daemon-reload`，再 `systemctl --user restart ai.kimi.exa-bridge`；Windows：重建计划任务 |
+| 常驻定义（launchd plist / 计划任务 / 启动文件夹 / systemd unit） | mac：`bootout` + `bootstrap`（只改脚本用 `kickstart -k`）；Windows：计划任务就重建任务，启动文件夹就改那个 `.lnk`、注册表就重写值（**只改脚本**时直接重启桥进程即可）；Linux：`systemctl --user daemon-reload`，再 `systemctl --user restart ai.kimi.exa-bridge` |
 | 会话日志 | `~/.kimi-code/sessions/<工作目录 id>/session_<uuid>/agents/main/wire.jsonl` |
 
 ## 扩展这个 skill
@@ -349,3 +360,11 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - 面板守卫：`~/.kimi-code/hooks/todo-panel-guard.py`（与本目录 `assets/` 副本逐字节一致，sha256 前 12 位 `bcab948b6ff0`）；端到端实测过——`kimi -p` 故意留一个全 done 面板，被钩子拦回、模型随后自行清空。
 - 状态栏：`~/.kimi-code/statusline.py`（与本目录 `assets/` 副本逐字节一致，sha256 前 12 位 `dc0642a2e5f2`）+ `tui.toml` 的 `[status_line].command = "python3 ~/.kimi-code/statusline.py"`；端到端实测过——另起一个临时实例截屏，footer 第一行渲染出 `… cache 98%  bal ¥44.50 …`。
 - 本机体检基线（2026-09-15，kimi-code 0.41.0）：`verify.py` **34 项通过 / 0 告警 / 0 失败**（当时网络是通的）。代理出口挂掉时唯一失败项会是"出网不通"，属网络层，与配置无关。
+
+### Windows 11 实测基线（2026-09-16，kimi-code 0.43.1，Store 版 Python 3.13，非管理员账户）
+
+- `verify.py`：**34 项通过 / 0 告警 / 0 失败**（`--e2e` 再 +2 = 36 项全过，真实搜索走桥成功；2026-09-16 复核。早先那次的 3 条告警是 kimi-cu 未启用，现已消除）。工具清单项是"最近 3 个会话快照的并集"，因为 `kimi -p` 有时在 MCP 握手前就拍快照。
+- `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`）。
+- 钩子 / 状态栏命令都写成 `python3 C:/Users/<你>/.kimi-code/...`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。
+- 常驻：启动文件夹快捷方式 `kimi-exa-bridge.lnk` → `pythonw.exe "%USERPROFILE%\.kimi-code\exa-bridge\launch.pyw"`（计划任务被非管理员权限拒、`HKCU\...\Run` 被火绒回滚，见 `references/web-tools-exa.md`）。桥日志照常落在 `%USERPROFILE%\.kimi-code\exa-bridge\bridge.log`。
+- kimi-cu：runtime 装在 `%LOCALAPPDATA%\KimiCU\kimi-cu.exe`。**这台机器的实际状态与手册写法不同**：官方插件那条路没走通——`/plugins install kimi-cu-win-plugin.zip` 是 TUI 交互命令，非交互会话执行不了，插件包至今停在 `%LOCALAPPDATA%\Temp\kimi-inv\`、`~/.kimi-code/plugins` 不存在；实机靠的是**手写 `mcp.json` 条目**（`command = "…\\KimiCU\\kimi-cu.exe"`、`args = ["mcp"]`），**实测可用**（会话里 13 个 `mcp__kimi-cu__*` 工具在线）。两条路别同时上：**要装官方插件就先删掉 `mcp.json` 里的 kimi-cu 条目**，否则两个实例抢键鼠。

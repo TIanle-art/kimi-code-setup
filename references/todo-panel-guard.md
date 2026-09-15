@@ -21,7 +21,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" ensure-hook Stop "python3 ~/.kimi-co
 python3 "$SKILL_DIR/assets/patch-config.py" check      # 应看到 PASS 有 Todo 面板守卫钩子
 ```
 
-- Windows（**未实测**）：脚本放 `%USERPROFILE%\.kimi-code\hooks\`，命令写 `py -3 %USERPROFILE%\.kimi-code\hooks\todo-panel-guard.py`；反斜杠由 `patch-config.py` 自动转义，别手写。用 `python3` 还是 `py` 看机器上装的是哪个。
+- **Windows（2026-09-16 实测：Windows 11 + kimi-code 0.43.1）**：脚本放 `%USERPROFILE%\.kimi-code\hooks\`，命令写 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`——正斜杠绝对路径，cmd.exe 与 Git Bash 都能跑，反斜杠/转义都不用操心。**实测 kimi 在 Windows 上用 `cmd.exe` 执行钩子命令**（探针钩子记录到：`%USERPROFILE%` 被展开、`$USERPROFILE` 原样、父进程 = `cmd.exe`），所以文档里 `%USERPROFILE%` 的写法同样可用；但**没有 `py` 启动器的机器**（Store 版 Python 不带）别写 `py -3`，先 `where python` 看一眼。
 - 生效时机：钩子在**会话启动时**加载 → **新开会话**生效（当前会话不变）。
 
 ## 验证

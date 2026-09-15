@@ -1,0 +1,37 @@
+"""Windows 版 exa-bridge 启动器模板（用 pythonw.exe 跑：无窗口、有日志、带本地令牌）。
+
+占位符（用 python / PowerShell 替换，别手改）：
+  __SCRIPT__            exa-bridge.py 绝对路径
+  __LOG__               bridge.log 绝对路径
+  __EXA_API_KEY__       Exa key（uuid 形状），留空 = 回落到 mcp.json 的 x-api-key
+  __EXA_BRIDGE_TOKEN__  本地令牌，留空 = 不校验（与 config.toml 的 api_key 对应）
+
+为什么需要它：Windows 的计划任务 / 启动文件夹都没法给进程塞环境变量，而 pythonw.exe
+是 GUI 子系统程序、没有控制台，桥写在 stderr 的日志会直接丢掉。这个包装器一次解决
+两件事——先把环境变量写进 os.environ，再把 stdout/stderr 重定向进 __LOG__，最后
+runpy 起桥。macOS 的 plist 用 EnvironmentVariables + StandardErrorPath 干同样的事。
+
+用法：替换占位符后存成 %USERPROFILE%\\.kimi-code\\exa-bridge\\launch.pyw，
+用 pythonw.exe 启动（计划任务 / 启动文件夹 / 快捷方式都行）：
+
+  pythonw.exe "%USERPROFILE%\\.kimi-code\\exa-bridge\\launch.pyw"
+
+排错：临时用 python.exe（不是 pythonw）跑同一文件，日志会同时出现在终端里，Ctrl+C 退出。
+
+代理：计划任务 / 启动文件夹拉起的进程同样不继承 shell 里的 HTTPS_PROXY；不用 TUN
+而靠终端 export 代理时，把下面两行取消注释并改成你的代理地址。
+"""
+import os
+import runpy
+import sys
+
+os.environ.setdefault("EXA_BRIDGE_TOKEN", "__EXA_BRIDGE_TOKEN__")
+os.environ.setdefault("EXA_API_KEY", "__EXA_API_KEY__")
+# os.environ.setdefault("HTTPS_PROXY", "http://127.0.0.1:7890")
+# os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
+
+_log = open("__LOG__", "a", buffering=1, encoding="utf-8", errors="replace")
+sys.stdout = _log
+sys.stderr = _log
+
+runpy.run_path("__SCRIPT__", run_name="__main__")

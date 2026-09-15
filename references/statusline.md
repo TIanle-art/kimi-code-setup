@@ -21,7 +21,8 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
 
 - **`--file` 必须写在子命令前面**（argparse 的位置要求）：写成 `set … --file …` 会报 `unrecognized arguments`（实测踩过）。
 - `patch-config.py` 对 `tui.toml` 一样幂等：`[status_line]` 存在就改 `command` 的值，不存在才追加整段；写前备份、写前复验（不通过就不落盘）。**别手写追加**。
-- Windows（**未实测**）：脚本放 `%USERPROFILE%\.kimi-code\`，命令写 `py -3 %USERPROFILE%\.kimi-code\statusline.py`——`~` 在 `cmd.exe` 里不展开，反斜杠交给 `patch-config.py` 转义。
+- **Windows（2026-09-16 实测：Windows 11 + kimi-code 0.43.1 + Store 版 Python 3.13）**：脚本放 `%USERPROFILE%\.kimi-code\`，命令写 `python3 C:/Users/<你>/.kimi-code/statusline.py`——用正斜杠绝对路径，cmd.exe 与 Git Bash 都能跑（`~` 两边都不展开，`%USERPROFILE%` 只在 cmd 里展开）。**别照搬 `py -3`**：本机就没有 `py` 启动器（Store 版 Python 不带），用 `where python` / `where pythonw` 看装了哪个。
+- **Windows 的 300ms 预算很紧（实测数据）**：同一份脚本，旧版直连启动 200ms、经 `cmd.exe` 244ms；把 `urllib.request` 与 `subprocess` 改成惰性导入后降到 **113ms / 156ms**——这两个模块在 Windows 上合计约 130ms。作者机器（macOS）只要 ~50ms，所以 Windows 上尤其别把重依赖放回文件顶部。超时会**静默回落内置布局**（不是报错），现象就是 footer 第一行没出现 `cache N%`。
 - 生效：`/reload-tui`（只重载 tui.toml）或新开会话。`tui.toml` 写坏了 kimi-code 会回落默认布局并提示，不会起不来。
 
 ## 验证
@@ -72,7 +73,10 @@ echo '{"model":"X","cwd":"'$HOME'","permissionMode":"yolo","sessionId":"session_
 - 自定义行**整体替换** footer 第一行：脚本自己复刻了模式徽章、模型名、cwd、git 分支，但**没有** git 脏标记 / PR 徽章，也没有轮换 tips。
 - 缓存率是**会话累计**（含 `usage.record` 的所有轮次），不是"最近一次请求"。
 - Kimi 托管账号（`/login`）走 `/usages` 配额接口、需要 OAuth 凭据，本脚本**不接**——那种机器上余额段自动消失，缓存率不受影响。
-- 本机实测（kimi-code 0.41.0，2026-09-15）：footer 渲染正常（另起临时实例截屏确认）、余额 ¥44.50 正常、脚本热路径 44ms（预算 300ms）。
+- 本机实测（kimi-code 0.41.0，2026-09-15，macOS）：footer 渲染正常（另起临时实例截屏确认）、余额 ¥44.50 正常、脚本热路径 44ms（预算 300ms）。
+- Windows 实测（kimi-code 0.43.1 + Store 版 Python 3.13，2026-09-16）：脚本输出正确（`cache 95%`、余额走 DeepSeek `/user/balance` 拿到 ¥39.25），后台刷新子进程正常；耗时直连 200ms → 惰性导入后 **113ms**，经 `cmd.exe` 244ms → **156ms**。
+- **Windows footer 渲染（2026-09-16 截屏复核，同一台）**：footer 第一行确实渲染出 `… cache 97%  bal ¥38.16  cached 8.4M · uncached 223k  ~`，数字逐秒更新——这条以前写的是"没在这一台复核"，现在补上了。链路构成（本机实测）：`cmd.exe /d /s /c` + Store 版 Python 启动 ≈165ms，脚本自身 ≈40ms（import 12.5 + `load_config` 14.6 + usage 扫描 6.3 + 组行 3~10），合计 ~200ms，300ms 预算只剩三成余量。
+- **超时是静默的，且跟机器忙不忙强相关**：runner 的 300ms 从 spawn 起算，超时就 `taskkill /T /F` 丢掉这次结果、回落内置布局，下一次成功再切回来——所以"footer 一直没出现 `cache N%`"时要先看当时机器是不是在跑重活（大量并行子进程会把 165ms 的启动开销顶过 300ms），别只怀疑脚本。想确认 TUI 到底有没有在调，可以在命令外面套一层探针脚本记录调用时刻（**实测 1 次/秒**）；runner 会给子进程注入 `KIMI_CODE_STATUS_LINE=1`，用它区分"runner 在调"和"别的东西在调"。
 
 ## 回滚
 

@@ -92,9 +92,9 @@ def http_post_json(url, payload, token=None, timeout=30):
         return 0, "%s: %s" % (type(exc).__name__, exc)
 
 
-def newest_wire(home):
+def recent_wires(home, limit=5):
     files = glob.glob(str(home / "sessions" / "*" / "session_*" / "agents" / "main" / "wire.jsonl"))
-    return max(files, key=os.path.getmtime) if files else None
+    return sorted(files, key=os.path.getmtime, reverse=True)[:limit]
 
 
 def last_tools(wire):
@@ -296,13 +296,25 @@ def check_mcp(home):
 
 
 def check_tools(home):
-    wire = newest_wire(home)
-    if not wire:
+    wires = recent_wires(home, 5)
+    if not wires:
         add("WARN", "工具清单：还没找到会话日志，先跑一次 kimi 再看")
         return
-    names = last_tools(wire) or []
+    # 单个新会话（尤其 kimi -p）可能在 MCP 握手完成前就拍了快照，只认最新一个会误报；
+    # 取最近几个带快照会话的并集，覆盖的是"这台机器现在能用哪些工具"。
+    names, used = [], 0
+    for wire in wires:
+        found = last_tools(wire) or []
+        if not found:
+            continue
+        used += 1
+        for name in found:
+            if name not in names:
+                names.append(name)
+        if used >= 3:
+            break
     if not names:
-        add("WARN", "工具清单：最新会话里没有 tools_snapshot 记录")
+        add("WARN", "工具清单：最近 %d 个会话里都没有 tools_snapshot 记录" % len(wires))
         return
     for label, prefix, level in (("WebSearch", "WebSearch", "FAIL"),
                                  ("FetchURL", "FetchURL", "FAIL"),
@@ -310,7 +322,7 @@ def check_tools(home):
                                  ("mcp__kimi-cu__", "mcp__kimi-cu__", "WARN")):
         found = [n for n in names if n.startswith(prefix)]
         add("PASS" if found else level, "工具 %s：%s" % (label, "%d 个" % len(found) if found else "缺失"))
-    add("PASS", "工具总数：%d（最近一次快照）" % len(names))
+    add("PASS", "工具总数：%d（最近 %d 个会话快照的并集）" % (len(names), used))
 
 
 LOG_RE = re.compile(r"^(\S+)\s+(WARN|ERROR|INFO)\s+(.*)$")
