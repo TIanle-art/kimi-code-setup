@@ -30,7 +30,8 @@ kimi-code 会丢弃整份配置并报 "No model configured. Run /login ..."，
                  `--raw set thinking.enabled true`；默认一律按字符串加引号
 
 写前自动备份；写前复验（重复表扫描 + Python ≥3.11 时用 tomllib 真解析），
-不通过就不落盘（文件保持原样）并返回非零码。
+不通过就不落盘（文件保持原样）并返回非零码。值里混进控制字符（\r / \n，典型来路
+是从 CRLF 模板 sed 出来的令牌）会当场拒绝——那种值写进 TOML 必然解析失败。
 """
 
 import argparse
@@ -93,6 +94,24 @@ def format_value(value: str, raw: bool = False) -> str:
     return '"%s"' % escaped
 
 
+CONTROL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+
+
+def reject_control(value: str, label: str) -> bool:
+    """拦下带控制字符的值。\r 的典型来路：从 CRLF 模板 sed 出来的令牌 / 命令。
+
+    不拦的话值照样能写进行里，等到复验才报 Illegal character '\\r'——用户只看到
+    一句 TOML 报错，猜不到是行尾符的锅（实测踩过：CRLF 的 systemd 模板）。
+    """
+    m = CONTROL_RE.search(value)
+    if not m:
+        return False
+    print("拒绝写入 %s：值里第 %d 个字符是控制字符 %s。多半是从 CRLF 模板 sed / 命令替换"
+          "出来的——先用 `tr -d '\\r'` 清一遍再写。文件未被修改。"
+          % (label, m.start() + 1, repr(m.group(0))), file=sys.stderr)
+    return True
+
+
 def validate(lines):
     """文本级复验：普通表同名出现两次 = 非法 TOML。"""
     seen = {}
@@ -132,6 +151,8 @@ def write_back(path: Path, lines, backup: bool):
 def cmd_set(path: Path, dotted: str, value: str, backup: bool, raw: bool = False) -> int:
     if not dotted.strip():
         print("键不能为空", file=sys.stderr)
+        return 2
+    if reject_control(value, "值（键 %s）" % dotted):
         return 2
     parts = dotted.split(".")
     key = parts[-1]
@@ -182,6 +203,8 @@ def cmd_set(path: Path, dotted: str, value: str, backup: bool, raw: bool = False
 
 
 def cmd_ensure_rule(path: Path, decision: str, pattern: str, backup: bool) -> int:
+    if reject_control(pattern, "pattern"):
+        return 2
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     for head in scan_headers(lines):
         if head["name"] != "permission.rules" or not head["array"]:
@@ -220,6 +243,10 @@ def cmd_ensure_hook(path: Path, event: str, command: str, timeout, matcher, back
     if event not in HOOK_EVENTS:
         print("未知事件 %s；已知取值：%s（以官方文档 hooks 页为准）"
               % (event, "、".join(sorted(HOOK_EVENTS))), file=sys.stderr)
+        return 2
+    if reject_control(command, "command"):
+        return 2
+    if matcher and reject_control(matcher, "matcher"):
         return 2
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     for head in scan_headers(lines):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""kimi-code 落地体检（只读）：一条命令跑完 Exa 通道 + 配置 + MCP + 工具清单 + 钩子 / 状态栏 / 补丁脚本行为自测 + kimi doctor + 资产一致性。
+"""kimi-code 落地体检（只读）：一条命令跑完 Exa 通道 + 配置 + MCP + 工具清单 + 钩子 / 状态栏 / 补丁脚本行为自测 + kimi doctor + 资产一致性 + 常驻定义令牌一致性。
 
 用法：
   python3 verify.py                 # 体检本机（~/.kimi-code 或 $KIMI_CODE_HOME）
@@ -28,6 +28,9 @@ from pathlib import Path
 HEADER_RE = re.compile(r"^\s*(\[\[?[^\]]+\]\]?)\s*(?:#.*)?$")
 RESULTS = []
 NET_UP = True
+IS_MAC = sys.platform == "darwin"
+IS_WINDOWS = sys.platform.startswith("win")
+IS_LINUX = sys.platform.startswith("linux")
 
 
 def add(level, text):
@@ -266,6 +269,61 @@ def check_bridge(base_url, token):
         add("FAIL", "直打桥搜索 → HTTP %s：%s" % (status, body[:200]))
 
 
+LAUNCH_DEF_TOKEN_PATTERNS = (
+    r"^Environment=EXA_BRIDGE_TOKEN=(.*)$",                      # Linux systemd
+    r"<key>EXA_BRIDGE_TOKEN</key>\s*<string>([^<]*)</string>",   # macOS plist
+    r'EXA_BRIDGE_TOKEN",\s*"([^"]*)"',                           # Windows launch.pyw
+)
+
+
+def native_launch_def(home):
+    if IS_MAC:
+        return "macOS launchd", Path.home() / "Library" / "LaunchAgents" / "ai.kimi.exa-bridge.plist"
+    if IS_WINDOWS:
+        return "Windows 启动器", home / "exa-bridge" / "launch.pyw"
+    return "Linux systemd", Path.home() / ".config" / "systemd" / "user" / "ai.kimi.exa-bridge.service"
+
+
+def check_launch_def(home, token):
+    """桥实际用的令牌写在常驻定义里，必须与 config.toml 的 api_key 对得上。
+
+    这条一直没人查，而它有个很隐蔽的坏法（实测 2026-09-16，Linux/WSL2）：模板是 CRLF 时
+    sed 出来的定义每行结尾多一个 \\r，令牌被带上回车——与 config.toml 里的值对不上，
+    直打桥 401，而 /health 一切正常，很难往行尾符上想。
+    """
+    label, path = native_launch_def(home)
+    if not path.exists():
+        add("INFO", "常驻定义：本机没有 %s（前台跑桥时属正常）" % path)
+        return
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if "\r" in text:
+        add("FAIL", "常驻定义有 CR（\\r）：%s —— 多半是从 CRLF 模板 sed 出来的，令牌尾部会多"
+                    "一个回车。用 `tr -d '\\r' < 模板 | sed …` 重新生成"
+                    "（见 references/web-tools-exa.md）" % path)
+    live = None
+    for pat in LAUNCH_DEF_TOKEN_PATTERNS:
+        m = re.search(pat, text, re.M)
+        if m:
+            live = m.group(1)
+            break
+    if live is None:
+        add("INFO", "%s：定义里读不到 EXA_BRIDGE_TOKEN（桥不校验令牌，或写法变了）" % label)
+        return
+    if live != live.strip():
+        add("FAIL", "%s：令牌首尾有多余空白（长度 %d，config.toml 里是 %d）——两边必然对不上"
+            % (label, len(live), len(token) if token else 0))
+        live = live.strip()
+    if not live:
+        add("INFO", "%s：令牌留空 = 桥不校验（config.toml 里写不写都行）" % label)
+    elif not token:
+        add("INFO", "%s：定义里有令牌，但 config.toml 的 services.*.api_key 是空的" % label)
+    elif live == token:
+        add("PASS", "常驻定义令牌：%s 与 config.toml 一致（%s）" % (label, mask(live)))
+    else:
+        add("FAIL", "常驻定义令牌：%s 与 config.toml 的 api_key 不一致（定义 %s / 配置 %s）—— "
+                    "直打桥会 401；改哪边都行，改完重启桥" % (label, mask(live), mask(token)))
+
+
 def plugin_mcp_servers(home):
     """插件自带的 MCP 声明：<data>/plugins/installed.json → 各自 kimi.plugin.json 的 mcpServers。
 
@@ -334,6 +392,10 @@ def check_mcp(home):
         prefix, (cfg, root) = sorted(cu_plugins.items())[0]
         add("PASS", "MCP kimi-cu：官方插件提供（%s → %s，cwd=%s）"
             % (prefix, cfg.get("command"), cfg.get("cwd") or "."))
+    elif IS_LINUX:
+        add("INFO", "MCP kimi-cu：Linux 没有官方安装路径（官方只发 macOS / Windows 包，CLI 里"
+                    "只有 createMacKimiCuEntry / createWindowsKimiCuEntry）——本项跳过；"
+                    "要让 AI 操作浏览器，可装官方 kimi-webbridge 插件（跨平台，只管浏览器）")
     else:
         add("WARN", "MCP kimi-cu 缺失 —— 无法操作本机浏览器 / App 界面")
 
@@ -367,8 +429,12 @@ def check_tools(home):
     # kimi-cu 的工具名看声明走哪条路：手写条目是 mcp__kimi-cu__*，插件是 mcp__plugin-<id>_<server>__*
     cu_tools = [n for n in names
                 if n.startswith("mcp__kimi-cu__") or ("kimi-cu" in n and n.startswith("mcp__plugin-"))]
-    add("PASS" if cu_tools else "WARN",
-        "工具 kimi-cu：%s" % ("%d 个" % len(cu_tools) if cu_tools else "缺失（手写条目与插件都没有）"))
+    if cu_tools:
+        add("PASS", "工具 kimi-cu：%d 个" % len(cu_tools))
+    elif IS_LINUX:
+        add("INFO", "工具 kimi-cu：Linux 没有官方安装路径，本项跳过（见 SKILL.md 第 3 步）")
+    else:
+        add("WARN", "工具 kimi-cu：缺失（手写条目与插件都没有）")
     add("PASS", "工具总数：%d（最近 %d 个会话快照的并集）" % (len(names), used))
 
 
@@ -683,6 +749,7 @@ def main():
         base_url, token = check_services(cfg)
         if base_url and is_local_endpoint(base_url):
             check_bridge(base_url, token)
+            check_launch_def(home, token)
     check_mcp(home)
     check_tools(home)
     check_hooks(home, cfg)

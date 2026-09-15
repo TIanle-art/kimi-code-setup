@@ -1,0 +1,5 @@
+# 一律 LF（含 Windows 检出）。这些文件里有 systemd / launchd 模板，CRLF 会让
+# `sed` 生成的启动定义每行结尾多一个 \r——令牌被带上回车后与 config.toml 对不上，
+# 桥直接 401（实测踩过；见 references/web-tools-exa.md 的 Linux 一节）。
+# 仓库里的 blob 本来就是 LF，这条只是把工作区也钉住，别让 Windows 侧再检出成 CRLF。
+* text=auto eol=lf

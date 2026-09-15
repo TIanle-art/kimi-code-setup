@@ -3,14 +3,14 @@ name: kimi-code-setup
 description: |
   新机器上把 kimi-code 从零配到可用（macOS / Windows / Linux）：provider 与模型、内置 WebSearch/FetchURL 接自己的 Exa（exa-bridge）、MCP、权限、AGENTS.md、Todo 守卫钩子、状态栏；也支持只读体检。触发：「调试/配置 kimi-code」「体检」、WebSearch 不能用、FetchURL 撞 WEB_PRIVATE_ADDRESS、exa-bridge 挂了、/login 顶掉配置。
 metadata:
-  version: "3.7.0"
+  version: "3.8.0"
 ---
 
 # 全新 kimi-code 落地（新机器开箱配置）
 
 **这个 skill 管的是"把一台新机器上刚下载的 kimi-code 配到能用"，不是修 bug**——排错只是收尾的一环。细则按主题放在 `references/`，本文件只留主流程、判据和索引；手上的脚本放在 `assets/`。
 
-> **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法、kimi-cu 入口实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**，实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
+> **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法、kimi-cu 入口实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**；**Linux 分支的 systemd 常驻、桥三层验证、钩子实时拦截实测于 WSL2 + kimi-code 0.41.0（Python 3.14，2026-09-16）**。实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
 
 ## 这个目录放在哪、怎么用
 
@@ -38,13 +38,13 @@ metadata:
 |------|--------|
 | `assets/exa-bridge.py` | 内置 WebSearch / FetchURL 的适配器（转调 Exa），部署到 `~/.kimi-code/exa-bridge/`；本文件里的副本 = 机器上在跑的那份 |
 | `assets/launchagent.plist.template` | macOS LaunchAgent 模板（占位符替换，别手写 XML） |
-| `assets/systemd-user.service.template` | Linux systemd 用户单元模板（同一套占位符；未实测） |
+| `assets/systemd-user.service.template` | Linux systemd 用户单元模板（同一套占位符；**2026-09-16 在 WSL2 实测通过**）。生成时的 `sed` 前面必须先 `tr -d '\r'`——CRLF 模板会把 `\r` 带进令牌，桥直接 401（见 `references/web-tools-exa.md`） |
 | `assets/windows-launch.pyw.template` | Windows 桥启动器模板（给 `pythonw.exe` 用）：替桥写进 `EXA_BRIDGE_TOKEN` / `EXA_API_KEY`，并把 stdout/stderr 重定向到 `bridge.log`——计划任务与启动文件夹都塞不进环境变量，`pythonw` 又没有控制台。部署到 `~/.kimi-code/exa-bridge/launch.pyw`，见 `references/web-tools-exa.md` 第 3 节（Windows） |
 | `assets/todo-panel-guard.py` | Stop 钩子：Todo 面板里的任务全部 `done` 却没清空时，拦下回合结束并提示先清空；部署到 `~/.kimi-code/hooks/`，见第 6 步 |
 | `assets/statusline.py` | footer 状态栏：常显整个会话的缓存命中率与 provider 余额；部署到 `~/.kimi-code/`，靠 `tui.toml` 的 `[status_line]` 挂上，见第 7 步 |
 | `assets/kimi-web-status.user.js` | 浏览器用户脚本（Tampermonkey）：把 cache/bal 显示在 `kimi web` 页面角落，数据来自桥的 `/status`；见 `references/statusline.md`「web 端」 |
-| `assets/patch-config.py` | **改 config.toml / tui.toml 只用它**：幂等（存在就改值、不存在才插入）、保留注释、写前备份、写前复验（不通过不落盘）；数组表用 `ensure-rule` / `ensure-hook` 按内容去重追加，`unset` / `remove-rule` / `remove-hook` 负责删除（回滚用）；`--raw` 写裸值，默认按字符串加引号 |
-| `assets/verify.py` | **一条命令体检**：出网 / 配置 / 桥 / MCP / 工具清单 / 钩子（含守卫脚本行为自测）/ 状态栏（含脚本行为自测）/ `kimi doctor` / 补丁脚本自测 / 脚本漂移，只读，返回 0/1/2 |
+| `assets/patch-config.py` | **改 config.toml / tui.toml 只用它**：幂等（存在就改值、不存在才插入）、保留注释、写前备份、写前复验（不通过不落盘）；数组表用 `ensure-rule` / `ensure-hook` 按内容去重追加，`unset` / `remove-rule` / `remove-hook` 负责删除（回滚用）；`--raw` 写裸值，默认按字符串加引号。值里带 `\r` / `\n` 会**当场拒绝**（CRLF 坑的防线之一） |
+| `assets/verify.py` | **一条命令体检**：出网 / 配置 / 桥 / MCP / 工具清单 / 钩子（含守卫脚本行为自测）/ 状态栏（含脚本行为自测）/ `kimi doctor` / 补丁脚本自测 / 脚本漂移 / 常驻定义令牌一致性，只读，返回 0/1/2 |
 
 ## 主流程
 
@@ -195,11 +195,13 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
     |------|--------------------------------------|---------|----------------|
     | macOS | `kimi-computer-use/latest/KimiCU.app.zip`（App，用 `ditto` 解压）+ `kimi-computer-use/latest/kimi-cu-plugin.zip`（插件），装完跑 `request-permissions --ax --screen` | `kimi-cu` | `mcp__plugin-kimi-cu_<server>__*` |
     | Windows | `kimi-computer-use-windows/latest/setup_windows.ps1`（校验 SHA-256 + Authenticode，把 runtime 装到 `%LOCALAPPDATA%\KimiCU\`）+ `kimi-computer-use-windows/latest/kimi-cu-win-plugin.zip`（插件） | `kimi-cu-win` | `mcp__plugin-kimi-cu-win_win__*` |
+    | Linux | **没有**——官方只发 macOS / Windows 两套包（2026-09-16 查证：官方文档只列这两个平台；CLI 的 `kimiCu.ts` 里只有 `createMacKimiCuEntry` / `createWindowsKimiCuEntry`；官方插件市场 `plugins/marketplace.json` 里没有 kimi-cu 条目）。**别硬装 macOS 包**：`KimiCU.app.zip` 是带 AppleScript 的 Mach-O App，Linux 上跑不起来 | — | — |
 
   - **手动装**（两条路等价，Windows 侧实测过）：TUI 里 `/plugins install <上表 plugin.zip 的完整 URL>`（`/plugins` 是**交互式斜杠命令，`kimi -p` 里不会执行**）；Windows 的 runtime 也可以直接跑官方脚本：`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-RestMethod 'https://cdn.kimi.com/kimi-computer-use-windows/latest/setup_windows.ps1' | Invoke-Expression"`。装完 `/reload` 或新开会话生效。
   - **别再手写 `mcp.json` 的 kimi-cu 条目**：官方插件自带 MCP 声明（Windows 是 `cmd /c bin\kimi-cu-mcp.cmd` → `%LOCALAPPDATA%\KimiCU\kimi-cu.exe mcp`，cwd 是插件根）。手写条目与插件**并存会各拉一个实例抢键鼠**——`verify.py` 的 MCP 检查专门拦这一条（实测报 FAIL），所以切换顺序是「先装插件 → 再删手写条目 → `/reload` 或新开会话」。
   - **macOS 权限**：首次调用若报权限错误，按安装器提示、或去「系统设置 → 隐私与安全性」给 KimiCU 打开辅助功能 / 屏幕录制。
   - **Windows 注意**：需要 PowerShell 5.1 或 7；会短暂接管真实鼠标键盘（不如 macOS 能稳定后台注入）；目标程序以管理员运行时 KimiCU 也要同级权限；安全软件可能拦"输入注入"，需要放行。另外**桌面端设置里的「Computer Use」是 macOS 专属**（`process.platform !== "darwin"` 直接返回 unsupported），Windows 上找不到它是正常的。
+  - **Linux 上没有官方安装路径（2026-09-16 查证，别白费劲）**：要"操作界面"只能绕——① 官方插件 **Kimi WebBridge**（`/plugins` → Official，跨平台；装的是浏览器扩展，驱动你自己的浏览器，不是桌面 App）；② 需要点界面的活儿改走 API / CLI。`verify.py` 在 Linux 上已把 kimi-cu 两项降级成 INFO，不再算告警。
 - 权限：`[[permission.rules]]` + `decision = "allow"` + `pattern = "mcp__exa__*"`；**kimi-cu 别给 allow，让它按默认询问**——它会真的动你的鼠标键盘。
 - `enabled` / `startupTimeoutMs` / `toolTimeoutMs` / `enabledTools` 都可省；改完新开会话生效。
 
@@ -314,6 +316,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 | `services.*` 缺失或指向 Kimi 托管 | 大概被 `/login` 顶掉了 | 按第 2 步用补丁脚本加回来 |
 | `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。**先等 5~10 秒**：Windows 上状态栏脚本的兜底会自己把它拉起来（实测 2 秒内自愈）；还不行再手动救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/web-tools-exa.md` 2.5 |
 | `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐，或把桥的 token 留空 |
+| `常驻定义令牌 … 不一致` / `常驻定义有 CR（\r）` | 常驻定义（plist / systemd unit / launch.pyw）里的令牌与 `config.toml` 对不上；最隐蔽的一种是 **CRLF 模板 sed 出来的定义**（令牌尾部多个回车） | 重新生成定义：`sed` 前先 `tr -d '\r' < 模板 \| sed …`；细节见 `references/web-tools-exa.md` 排错表 |
 | `桥脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 想清楚以哪份为准，再 `cp` 过去 + 重启桥 |
 | `钩子：没有 [[hooks]]` / `没装 Todo 面板守卫` / `钩子脚本行为 … FAIL` | 第 6 步没做、规则被删、或脚本被改坏 | 按第 6 步重装（`ensure-hook` 幂等，重复跑安全）；钩子**新开会话**才生效 |
 | `状态栏：` 开头的几项（tui.toml 缺 `[status_line]` / command 为空 / 脚本缺失 / 行为自测 FAIL） | 第 7 步没做、`tui.toml` 被还原或被 `/reload-tui` 之外的手段改回、脚本被改坏 | 按第 7 步重装（补丁脚本幂等）；**`/reload-tui` 当场生效**，不用重启会话 |
@@ -352,8 +355,9 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - 加了新主题，记得在上面的主流程表里补一行，否则后来的人（或 agent）看不见它。
 - 脚本、配置模板、安装脚本放 `assets/`；**新增落地点优先复用 `patch-config.py`（写）和 `verify.py`（读）**，别再手写"追加/覆盖"逻辑。
 - **已实测 与 "按标准做法写的" 要分开标注**（例：Windows 那节就是这么标的），免得下次被当成已验证。
-- **正本只保留一份**（本机的"安装副本"除外）：改动只动桌面正本，改完按上面「放在哪」一节同步到 `~/.kimi-code/skills/kimi-code-setup/`；搬运/归档完别在别处再留第三份，前后用 `diff -rq 旧目录 新目录` 核对——`verify.py` 的"脚本一致性"只比对 3 个部署脚本，不比对文档。
-- 改这个目录前先整目录备份（目录无 git）：`cp -a kimi-code-setup kimi-code-setup.bak-$(date +%Y%m%d-%H%M%S)`。
+- **一律 LF**（仓库已用 `.gitattributes` 钉住）：`assets/*.template` 要拿去 `sed` 生成常驻定义，CRLF 会让令牌尾部多一个 `\r`（实测 401）。Windows 侧检出后别再把行尾改回 CRLF。
+- **正本只保留一份**（本机的"安装副本"除外）：改动只动正本，改完按上面「放在哪」一节同步到 `~/.kimi-code/skills/kimi-code-setup/`；搬运/归档完别在别处再留第三份，前后用 `diff -rq 旧目录 新目录` 核对——`verify.py` 的"脚本一致性"只比对 3 个部署脚本，不比对文档。
+- 正本是个 git 仓库（`origin` = 公开仓库）：动手前 `git status` 确认工作区干净，改完 `git commit` + `git push`。**别再用 `cp -a` 做目录备份**——git 就是备份，`cp -a` 只会把 `.git` / `__pycache__` 一起拷进去。
 - 换了 kimi-code 版本，先跑 `verify.py`，再更新顶部那句"验证版本"。
 - 改了目录名或位置，记得同步：frontmatter 的 `name`、本文件与 `references/` 里的 `$SKILL_DIR` 说明、以及作者机器上 `~/.kimi-code/AGENTS.md` 里的指路与触发约定。
 
@@ -373,3 +377,13 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 - 钩子 / 状态栏命令都写成 `python3 C:/Users/<你>/.kimi-code/...`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。
 - 常驻：启动文件夹快捷方式 `kimi-exa-bridge.lnk` → `pythonw.exe "%USERPROFILE%\.kimi-code\exa-bridge\launch.pyw"`（计划任务被非管理员权限拒、`HKCU\...\Run` 被火绒回滚，见 `references/web-tools-exa.md`）。桥日志照常落在 `%USERPROFILE%\.kimi-code\exa-bridge\bridge.log`。
 - kimi-cu（computer-use）：**全部走官方下载**——Windows 侧是官方 runtime（`setup_windows.ps1` → `%LOCALAPPDATA%\KimiCU\`）+ 官方插件（`/plugins install …/kimi-cu-win-plugin.zip`；2026-09-16 实机切换完成，v0.2.17 落在 `~/.kimi-code/plugins/managed/kimi-cu-win/`，`plugins/installed.json` 记 `enabled: true`）；kimi-code 自己内置了这个能力的安装器（`kimiCu.ts`），会顺手**移除旧的 `mcp.json` 手写注册**。插件自带 MCP 声明 `mcpServers.win`（`cmd.exe` + `bin\kimi-cu-mcp.cmd`，cwd 是插件根，13 个 enabledTools），所以**工具名是 `mcp__plugin-kimi-cu-win_win__*`**，不再是 `mcp__kimi-cu__*`；`mcp.json` 里**已无** kimi-cu 条目。**两条路互斥**（并存＝两个实例抢键鼠）：`verify.py` 的 MCP 检查专门拦这一条（实测会报 FAIL），切换顺序是「先装插件 → 再删手写条目 → 最后 `/reload` 或新开会话」。
+
+### Linux 实测基线（2026-09-16，WSL2 + kimi-code 0.41.0，Python 3.14.7，非 root）
+
+- `verify.py`：**33 项通过 / 0 告警 / 0 失败**；`--e2e` 35 项全过（真实搜索走桥成功、`bridge.log` 同步增长）。kimi-cu 那两项在 Linux 上降级成 `INFO`——没有官方路径，不该算告警。
+- `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"` + 模型级 `default_effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`、`[status_line].command`）。
+- 常驻：systemd 用户单元 `ai.kimi.exa-bridge`（`~/.config/systemd/user/`，`enable --now`；软链落在 `default.target.wants/`）。`loginctl enable-linger "$USER"` 在 WSL2 上**免提权**通过；`kill -9` 桥后 `Restart=always` 几秒内拉起（新 PID + `/health` 恢复）。
+- 钩子 / 状态栏命令都写成 `python3 ~/.kimi-code/hooks/todo-panel-guard.py` / `python3 ~/.kimi-code/statusline.py`（与 macOS 相同；`~` 由 shell 展开，实测可用）。
+- **CRLF 坑（本机实测踩到，已修）**：从 Windows 侧打包出来的工作区是 CRLF，`sed` 生成的 systemd unit 每行结尾带 `\r` → `EXA_BRIDGE_TOKEN` 尾部多一个回车，与 `config.toml` 里的值对不上（当时 `patch-config.py` 的复验拦下了没落盘，但没修之前一直是个雷）。现在的五道防线：整仓转 LF + `.gitattributes`（`* text=auto eol=lf`）+ 文档里 `sed` 前一律先 `tr -d '\r'` + `patch-config.py` 当场拒绝控制字符 + `verify.py` 新增「常驻定义令牌」比对（连 `\r` 都认得出来）。
+- 端到端：Todo 守卫用 `kimi -p` 实测——故意留一个全 `done` 的面板，被钩子拦回、模型随后自行清空。
+- kimi-cu：**Linux 没有官方路径**（证据与退路见第 3 步的表格和下面那条说明）。

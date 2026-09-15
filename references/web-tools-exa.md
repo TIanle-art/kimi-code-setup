@@ -96,10 +96,11 @@ api_key = "<本地令牌>"
 ```bash
 D=$HOME/.kimi-code/exa-bridge
 TOKEN=<本地令牌>
-sed -e "s|__PYTHON__|$(command -v python3)|" -e "s|__SCRIPT__|$D/exa-bridge.py|" \
+# 先 tr -d '\r'：CRLF 的工作区会把 \r 带进令牌（与 config.toml 对不上 → 桥 401，实测踩过）
+tr -d '\r' < "$SKILL_DIR/assets/launchagent.plist.template" | \
+  sed -e "s|__PYTHON__|$(command -v python3)|" -e "s|__SCRIPT__|$D/exa-bridge.py|" \
     -e "s|__LOG__|$D/bridge.log|" \
     -e "s|__PORT__|8787|" -e "s|__EXA_API_KEY__|<Exa key>|" -e "s|__EXA_BRIDGE_TOKEN__|$TOKEN|" \
-    "$SKILL_DIR/assets/launchagent.plist.template" \
     > ~/Library/LaunchAgents/ai.kimi.exa-bridge.plist
 plutil -lint ~/Library/LaunchAgents/ai.kimi.exa-bridge.plist   # 必须 OK，XML 坏了 launchd 会静默不理
 chmod 600 ~/Library/LaunchAgents/ai.kimi.exa-bridge.plist
@@ -177,27 +178,32 @@ $sc.Save()
 
 **3. 排错**：`.pyw` 起不来时用 `python.exe`（不是 pythonw）前台跑同一个 `launch.pyw`，日志会同时打到终端（Ctrl+C 退出）；端口被占就在启动器里加一行 `os.environ.setdefault("EXA_BRIDGE_PORT", "8788")`，并同步改 `config.toml` 两处 `base_url`。
 
-**Linux（systemd 用户单元；本文档作者未在 Linux 上实测，按标准做法写）**：
+**Linux（systemd 用户单元；2026-09-16 在 WSL2 + kimi-code 0.41.0 实测通过）**：
 
 ```bash
 mkdir -p ~/.config/systemd/user ~/.kimi-code/exa-bridge
 cp "$SKILL_DIR/assets/exa-bridge.py" ~/.kimi-code/exa-bridge/
 D=$HOME/.kimi-code/exa-bridge
-sed -e "s|__PYTHON__|$(command -v python3)|" -e "s|__SCRIPT__|$D/exa-bridge.py|" \
+TOKEN=$(python3 -c "import secrets;print(secrets.token_hex(16))")
+# 模板必须先 tr -d '\r' 再 sed：CRLF 模板会让生成的每一行结尾多一个 \r，
+# EXA_BRIDGE_TOKEN 被带上回车后与 config.toml 里的对不上，打桥直接 401（实测踩过）
+tr -d '\r' < "$SKILL_DIR/assets/systemd-user.service.template" | sed \
+    -e "s|__PYTHON__|$(command -v python3)|" -e "s|__SCRIPT__|$D/exa-bridge.py|" \
     -e "s|__LOG__|$D/bridge.log|" -e "s|__PORT__|8787|" \
-    -e "s|__EXA_API_KEY__|<Exa key>|" -e "s|__EXA_BRIDGE_TOKEN__|<本地令牌>|" \
-    "$SKILL_DIR/assets/systemd-user.service.template" \
+    -e "s|__EXA_API_KEY__|<Exa key>|" -e "s|__EXA_BRIDGE_TOKEN__|$TOKEN|" \
     > ~/.config/systemd/user/ai.kimi.exa-bridge.service
 chmod 600 ~/.config/systemd/user/ai.kimi.exa-bridge.service   # 里面有 Exa key
 systemctl --user daemon-reload
 systemctl --user enable --now ai.kimi.exa-bridge
 systemctl --user status ai.kimi.exa-bridge --no-pager | head -15
-loginctl enable-linger "$USER"    # 关键：纯 SSH / 不登录图形会话时也让服务常驻
+loginctl enable-linger "$USER"    # 关键：纯 SSH / 不登录图形会话时也让服务常驻（WSL2 免提权通过；要授权时会弹 polkit）
 ```
 
+- **同一条本地令牌写两处**：`config.toml` 的 `[services.*].api_key`（走 `patch-config.py set`）与 unit 里的 `EXA_BRIDGE_TOKEN`。两边不一致就是"直打桥 401"；`verify.py` 的「常驻定义令牌」一项直接比对这两处——**令牌尾部多了个 `\r` 也认得出来**（就是上面那个 CRLF 坑的症状）。
 - 改了 **unit** 要 `systemctl --user daemon-reload` 再 `restart`；只改**脚本**直接 `systemctl --user restart ai.kimi.exa-bridge`。
 - 日志：unit 里把 stdout/stderr 写进了 `bridge.log`；systemd 自己的记录用 `journalctl --user -u ai.kimi.exa-bridge -n 50 --no-pager`。
 - 环境变量同理**不继承 shell**（`export HTTPS_PROXY=…` 对 systemd 无效），要显式写进 unit 的 `Environment=`。
+- WSL2 实测：`enable` 建的软链在 `~/.config/systemd/user/default.target.wants/`；`kill -9` 掉桥后 `Restart=always` 会在几秒内拉起来（新 PID + `/health` 恢复）。macOS/Windows 那套"兜底自愈"在这儿用不上——状态栏脚本里那个探活拉起是 Windows 专属。
 
 **兜底**：不装常驻，需要时前台 `python3 ~/.kimi-code/exa-bridge/exa-bridge.py`。
 
@@ -253,6 +259,7 @@ python3 "$S/patch-config.py" unset services.moonshot_fetch.api_key
 | `FetchURL` 报 `WEB_PRIVATE_ADDRESS` | 桥挂了 → CLI 静默回落本地直连，撞 fake-IP 代理 | 先把桥救活；这错误**不代表** Exa 有问题 |
 | 桥返回 `401 unauthorized` | `config.toml` 的 `api_key` 与 `EXA_BRIDGE_TOKEN` 不一致 | 两边改成同一个值；或把脚本的 token 留空 |
 | 401 之后的请求莫名 `400 Bad request syntax` | 旧脚本没读完 401 的请求体 | 换用 skill 里的 `assets/exa-bridge.py`（已修） |
+| **桥 `/health` 正常、直打 `/search` 却 401，两边令牌"看起来一模一样"** | 常驻定义是用 **CRLF 模板**生成的：`sed` 出来的每一行结尾多一个 `\r`，`EXA_BRIDGE_TOKEN` 被带上回车 → 与 `config.toml` 里的值差一个不可见字符（实测踩过，Linux systemd unit） | 重新生成定义，`sed` 之前先 `tr -d '\r' < 模板 \| sed …`（第 3 节 macOS / Linux 两段都已带上）；`verify.py` 的「常驻定义令牌」一项会直接报这个 |
 | `/health` 里 `key: false` | 脚本拿不到 Exa key | 设 `EXA_API_KEY`，或在 `mcp.json` 写 `mcpServers.exa.headers.x-api-key` |
 | Exa 返回 `402 NO_MORE_CREDITS` / `429` | 额度用尽或限速 | 充值/换 key；换 MCP 通道没用（同一把 key），只能换数据源（如自建 SearXNG 后改 `base_url`） |
 | 配置改了没反应 | `[services.*]` 在进程内只解析一次 | 退出并重启 `kimi`（`-r` 恢复会话），别只在同一进程里开新会话 |
