@@ -22,6 +22,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check      # 应看到 PASS 有 Todo
 ```
 
 - **Windows（2026-09-16 实测：Windows 11 + kimi-code 0.43.1）**：脚本放 `%USERPROFILE%\.kimi-code\hooks\`，命令写 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`——正斜杠绝对路径，cmd.exe 与 Git Bash 都能跑，反斜杠/转义都不用操心。**实测 kimi 在 Windows 上用 `cmd.exe` 执行钩子命令**（探针钩子记录到：`%USERPROFILE%` 被展开、`$USERPROFILE` 原样、父进程 = `cmd.exe`），所以文档里 `%USERPROFILE%` 的写法同样可用；但**没有 `py` 启动器的机器**（Store 版 Python 不带）别写 `py -3`，先 `where python` 看一眼。
+- **中文 Windows：钩子命令要加 `-X utf8`（2026-09-18 实测：Windows 11 + kimi-code 2.0.0 + Python 3.11.9，cp936）**：Python 往 stderr 写提示时按控制台代码页（GBK）编码，而 kimi 按 UTF-8 读钩子输出——拦截消息到模型手里是一串 `�`（拦截本身仍生效，只是提示读不出来；本机实测踩过一次真实拦截）。修法：命令给解释器加 UTF-8 模式、**脚本一个字节不用动**——`python.exe -X utf8 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`。字节级验证：`python.exe -c "import sys;sys.stderr.write('测试')" 2>f` 不带 `-X utf8` 落 GBK（`b2 e2 ca d4`）、带 `-X utf8` 落 UTF-8（`e6 b5 8b e8 af 95`）。英文系统（cp1252/cp437）上写中文 stderr 未实测，同样建议带上，零成本。
 - 生效时机：钩子在**会话启动时**加载 → **新开会话**生效（当前会话不变）。
 
 ## 验证

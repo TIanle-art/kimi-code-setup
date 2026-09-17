@@ -10,7 +10,7 @@ metadata:
 
 **这个 skill 管的是"把一台新机器上刚下载的 kimi-code 配到能用"，不是修 bug**——排错只是收尾的一环。细则按主题放在 `references/`，本文件只留主流程、判据和索引；手上的脚本放在 `assets/`。
 
-> **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法、kimi-cu 入口实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**；**Linux 分支的 systemd 常驻、桥三层验证、钩子实时拦截实测于 WSL2 + kimi-code 0.41.0（Python 3.14，2026-09-16）**。实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
+> **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法、kimi-cu 入口实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**；**Linux 分支的 systemd 常驻、桥三层验证、钩子实时拦截实测于 WSL2 + kimi-code 0.41.0（Python 3.14，2026-09-16）**；**Windows 11 + kimi-code 2.0.0（Python 3.11.9，非管理员，2026-09-18）复跑：主流程与 `assets/verify.py --e2e` 全通过；同期修复中文 Windows 的钩子提示 GBK 乱码（`-X utf8`，见 `references/todo-panel-guard.md`），并补记 kimi-cu 两条装法与 2.0.0 安装器会写冗余 `mcp.json` 条目（见 `references/computer-use.md`）**。实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
 
 ## 这个目录放在哪、怎么用
 
@@ -100,6 +100,7 @@ pgrep -fl exa-bridge           # 同上，但只有 macOS / Linux 有 pgrep（Wi
 | 目标平台：macOS、Windows 11 还是 Linux | 决定常驻方式（launchd / 计划任务 / systemd user unit）、以及 `~` 与 `%USERPROFILE%` 的写法 |
 | **Exa API key：有还是没有** | 第 2 步的桥**必须**有 key 才建得起来；没有就走下面那张表的三条路，别硬上（已有 key 的机器上可直接搬：`mcp.json` 的 `mcpServers.exa.headers.x-api-key`） |
 | LLM provider 的 API key | **仅当** `kimi provider list` 显示还没配 provider 时才问 |
+| **computer-use 的插件装法（macOS / Windows 才问）**：用户手动走官方 `/plugins install`，还是 agent 代装 | 两条路都实测过、效果一样过程不同：官方装由 kimi 登记，但 **2.0.0 会多写一条 `mcp.json` 条目要删**；agent 代装＝下载 zip 原样解压 + 手写登记（2026-09-18 沙箱实测可加载），用户零命令。Linux 不问（不装）。细节 `references/computer-use.md` |
 
 | 不用问，按默认走 | 默认值 |
 |------------------|--------|
@@ -193,8 +194,8 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
 ```
 
 - **exa**：与内置通道是**同一把 Exa key、同一份额度**，但能力是超集：多 URL 批量抓取、`maxCharacters`、`numResults`/`objective`、`agent_run` 多步调研。
-- **kimi-cu（computer-use）——操作本机真实浏览器 / App 界面的工具**（截图读界面、点击、输入、滚动……）：**macOS / Windows 默认装，Linux 不装**（官方只发 mac / win 两套包，Linux 上直接跳过、别硬装 macOS 包）；**一律走 kimi 官方下载**（TUI `/plugins install …` 或官方 runtime 脚本），装完 `/reload` 或新开会话生效。
-- **别再手写 `mcp.json` 的 kimi-cu 条目**：官方插件自带 MCP 声明（macOS `mcp__plugin-kimi-cu_*` / Windows `mcp__plugin-kimi-cu-win_win__*`），手写条目与插件**并存＝两个实例抢键鼠**——`verify.py` 的 MCP 检查专门拦这一条（实测报 FAIL），切换顺序是「先装插件 → 再删手写条目 → `/reload` 或新开会话」。
+- **kimi-cu（computer-use）——操作本机真实浏览器 / App 界面的工具**（截图读界面、点击、输入、滚动……）：**macOS / Windows 默认装，Linux 不装**（官方只发 mac / win 两套包，Linux 上直接跳过、别硬装 macOS 包）；**一律走 kimi 官方下载**；**插件装法先问用户**（① 用户手动走官方 `/plugins install`；② agent 代装＝下载 zip 原样解压 + 手写登记，用户零命令——两条路都实测过，差异与做法见 `references/computer-use.md` 的「装法：先问用户」）；runtime 两条路都用官方脚本，agent 直接代跑不用问。装完 `/reload` 或新开会话生效。
+- **别再手写 `mcp.json` 的 kimi-cu 条目**：官方插件自带 MCP 声明（macOS `mcp__plugin-kimi-cu_*` / Windows `mcp__plugin-kimi-cu-win_win__*`），手写条目与插件**并存＝两个实例抢键鼠**——`verify.py` 的 MCP 检查专门拦这一条（实测报 FAIL）。**2.0.0 实测：官方安装器自己会写一条**（与 0.43.1 相反）——装完删掉它、功能不受影响（沙箱实测）。切换顺序是「先装插件 → 再删手写条目 → `/reload` 或新开会话」。
 - 平台对照表、两条手动装命令、macOS 权限、Windows 注意事项、Linux 不装的查证，都在 `references/computer-use.md`。
 - 权限：`[[permission.rules]]` + `decision = "allow"` + `pattern = "mcp__exa__*"`；**kimi-cu 别给 allow，让它按默认询问**——它会真的动你的鼠标键盘。
 - `enabled` / `startupTimeoutMs` / `toolTimeoutMs` / `enabledTools` 都可省；改完新开会话生效。
@@ -250,9 +251,11 @@ python3 "$SKILL_DIR/assets/patch-config.py" ensure-hook Stop "python3 ~/.kimi-co
 
 # Windows：kimi 用 cmd.exe 执行钩子命令、`~` 不展开，命令必须写绝对路径（正斜杠，实测）——
 # python3 "$SKILL_DIR/assets/patch-config.py" ensure-hook Stop "python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py" --timeout 5
+# 中文 Windows 再加上 `-X utf8`（否则拦截提示按 GBK 写出、被当 UTF-8 读成乱码；2026-09-18 实测）——
+# python3 "$SKILL_DIR/assets/patch-config.py" ensure-hook Stop "python.exe -X utf8 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py" --timeout 5
 ```
 
-判据：`patch-config.py check` 出现 `PASS 有 Todo 面板守卫钩子`；`verify.py` 的「钩子脚本行为」PASS（全 done → 拦、清空 → 放行）。**Windows 上必须按上面注释里那串绝对路径装**（`~` 在 `cmd.exe` 里不展开；Store 版 Python 没有 `py` 启动器，别写 `py -3`），而且 `remove-hook` 按 event+command **逐字匹配**——用哪串装的就得用哪串删。机制、端到端验证法、回滚都在 `references/todo-panel-guard.md`。**新会话生效**（钩子不热加载），装完按**第 8 步**总验收时顺手再验一次。
+判据：`patch-config.py check` 出现 `PASS 有 Todo 面板守卫钩子`；`verify.py` 的「钩子脚本行为」PASS（全 done → 拦、清空 → 放行）。**Windows 上必须按上面注释里那串绝对路径装**（`~` 在 `cmd.exe` 里不展开；Store 版 Python 没有 `py` 启动器，别写 `py -3`；**中文 Windows 用带 `-X utf8` 的那一串**），而且 `remove-hook` 按 event+command **逐字匹配**——用哪串装的就得用哪串删。机制、端到端验证法、回滚都在 `references/todo-panel-guard.md`。**新会话生效**（钩子不热加载），装完按**第 8 步**总验收时顺手再验一次。
 
 ### 7. 状态栏（缓存命中率 + API 余额）
 
