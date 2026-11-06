@@ -22,7 +22,7 @@ Backends (EXA_BRIDGE_BACKEND = exa | deepseek; unset = auto):
   deepseek  DeepSeek POST /v1/tools/search + /v1/tools/fetch (2026-10 上线)
             auto 模式下没有 Exa key、但有 DeepSeek key 时自动选它——
             所以常驻定义模板不用改：EXA_API_KEY 留空即可
-            ⚠️ 按公开资料实现、未实测：响应字段按多种写法容错解析，体检 --e2e 见分晓
+            ✅ 2026-11 真机实测通过；响应字段按多种写法容错解析
 
 Environment:
   EXA_API_KEY             Exa key; falls back to ~/.kimi-code/mcp.json
