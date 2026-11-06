@@ -353,7 +353,9 @@ def check_launch_def(home, tokens):
                     "生成一把（`python3 -c \"import secrets;print(secrets.token_hex(16))\"`），"
                     "写进常驻定义与 config.toml 两处 services.*.api_key，重启桥" % label)
     elif not any(t for _, t in tokens):
-        add("INFO", "%s：定义里有令牌，但 config.toml 的 services.*.api_key 是空的" % label)
+        # 桥要令牌、CLI 却什么都不带 → 每次直打桥都 401，WebSearch / FetchURL 全挂
+        add("FAIL", "常驻定义令牌：%s 里有令牌，但 config.toml 的 services.*.api_key 是空的 —— "
+                    "CLI 不带令牌，直打桥会 401；用 patch-config.py set 把两处 api_key 都写成定义里那把" % label)
     elif all(t == live for _, t in tokens):
         add("PASS", "常驻定义令牌：%s 与 config.toml 一致（%s）" % (label, mask(live)))
     else:
@@ -365,7 +367,8 @@ def check_launch_def(home, tokens):
 
 def launch_def_behaves():
     """验证「常驻定义令牌」这条检查自己的解析：一致→PASS、尾部 \\r→FAIL、值不同→FAIL、
-    两处 services 都对得上→PASS、有一处对不上→FAIL、令牌留空→WARN。
+    两处 services 都对得上→PASS、有一处对不上→FAIL、令牌留空→WARN、
+    定义有令牌但 config.toml 两处都空→FAIL。
 
     用临时文件 + 临时替换 native_launch_def 跑，不碰真实机器、也不把探针输出打进结果。
     """
@@ -384,7 +387,8 @@ def launch_def_behaves():
                     ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "xyz")], "FAIL"),
                     ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "abc"), ("fetch", "abc")], "PASS"),
                     ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", "abc"), ("fetch", "xyz")], "FAIL"),
-                    ("Environment=EXA_BRIDGE_TOKEN=\n", [("search", "")], "WARN")):
+                    ("Environment=EXA_BRIDGE_TOKEN=\n", [("search", "")], "WARN"),
+                    ("Environment=EXA_BRIDGE_TOKEN=abc\n", [("search", ""), ("fetch", "")], "FAIL")):
                 probe.write_bytes(text.encode())
                 RESULTS.clear()
                 globals()["native_launch_def"] = lambda home, _p=probe: ("probe", _p)
@@ -394,10 +398,10 @@ def launch_def_behaves():
     finally:
         RESULTS[:] = saved_results
         globals()["native_launch_def"] = saved_native
-    want_levels = ["PASS", "FAIL", "FAIL", "PASS", "FAIL", "WARN"]
+    want_levels = ["PASS", "FAIL", "FAIL", "PASS", "FAIL", "WARN", "FAIL"]
     if levels != want_levels:
         return False, "期望 %s，实际 %s" % (want_levels, levels)
-    return True, "一致→PASS、尾部 \\r→FAIL、值不同→FAIL、两处都一致→PASS、两处有一处不一致→FAIL、令牌留空→WARN"
+    return True, "一致→PASS、尾部 \\r→FAIL、值不同→FAIL、两处都一致→PASS、两处有一处不一致→FAIL、令牌留空→WARN、配置侧为空→FAIL"
 
 
 def check_launch_def_selftest():

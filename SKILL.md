@@ -196,7 +196,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check
 - 权限：`[[permission.rules]]` + `decision = "allow"` + `pattern = "mcp__exa__*"`。
 - `enabled` / `startupTimeoutMs` / `toolTimeoutMs` / `enabledTools` 都可省；改完新开会话生效。
 
-**通道优先级：默认走内置，MCP 只在"需要"时上**（这条必须同时落到第 5 步的 AGENTS.md 里，模型才会照做）：
+**通道优先级：默认走内置，MCP 只在"需要"时上**（这条必须同时落到第 5 步的 AGENTS.md 里，模型才会照做；**桥走 DeepSeek 的机器没有 exa MCP**，下表里 `mcp__exa__*` 那两行不适用，AGENTS.md 用第 5 步的 B 段）：
 
 | 场景 | 用哪个 |
 |------|--------|
@@ -227,9 +227,17 @@ python3 "$SKILL_DIR/assets/patch-config.py" ensure-rule allow 'mcp__exa__*'
 
 ### 5. 策略文件 AGENTS.md
 
-kimi-code 会读（层级叠加，就近优先）：`~/.kimi-code/AGENTS.md` → 项目 `.kimi-code/AGENTS.md` → 项目 `AGENTS.md`（另有 `~/.agents/AGENTS.md`）。新机器至少写清联网工具的分工，否则模型不知道什么时候换通道：
+kimi-code 会读（层级叠加，就近优先）：`~/.kimi-code/AGENTS.md` → 项目 `.kimi-code/AGENTS.md` → 项目 `AGENTS.md`（另有 `~/.agents/AGENTS.md`）。新机器至少写清联网工具的分工，否则模型不知道什么时候换通道。**按桥的后端二选一**（看 `curl -s http://127.0.0.1:8787/health` 里的 `backend`；没有这个字段 = exa），只写其中一段：
+
+**A. 后端是 Exa（有 Exa key，`mcp.json` 里也挂了 exa）：**
 
 > **默认优先内置**：普通搜索 / 抓取一律先用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，固定 5 条、约 400 字符摘要，免确认）。**只有需要内置做不到的能力时**才切到 exa 的 MCP `mcp__exa__*`：一次抓多个 URL、控制 `maxCharacters`、调 `numResults`/`objective`、`agent_run` 多步调研。内置通道失效（桥挂、未起）时也切 MCP；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl。
+
+**B. 后端是 DeepSeek（没有 Exa key，走 DeepSeek Search / Fetch API，`mcp.json` 里没有 exa）：**
+
+> **联网只用内置**：搜索 / 抓取一律用 `WebSearch` / `FetchURL`（打到本机 exa-bridge，后端是 DeepSeek Search / Fetch API，固定 5 条、约 400 字符摘要，免确认）。本机**没有** exa 的 MCP，别去找 `mcp__exa__*`；要抓多个 URL 就逐个调 `FetchURL`。内置通道失效（桥挂、未起）时先告诉用户、别硬猜；内网地址、localhost、需登录态 cookie 的页面只能用 Bash curl。
+
+**别两段都写**：B 机器上照抄 A 段，模型会去调不存在的 `mcp__exa__*`；A 机器上写 B 段，就白白放弃了 exa MCP 的批量抓取和 `agent_run`。
 
 ### 6. Todo 面板守卫（Stop 钩子 + 约定）
 
