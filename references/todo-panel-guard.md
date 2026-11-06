@@ -5,10 +5,11 @@
 ## 机制
 
 - `config.toml` 里一条 `[[hooks]]`：`event = "Stop"`（模型准备结束回合时触发，官方文档明确它**支持阻断**），`command` 调 `~/.kimi-code/hooks/todo-panel-guard.py`。
-- 脚本读 stdin 的 `session_id` → 从 `$KIMI_CODE_HOME/session_index.jsonl` 定位会话目录 → 扫 `agents/main/wire.jsonl` 尾部，取**本回合**最后一次 `TodoList` 调用的 `todos`。
-- 判定：本回合留下过面板、条目非空、且**全部** `status = "done"` → `exit 2` + stderr 提示（提示会写回上下文）；其余情况 `exit 0` 放行。
-- 刻意不拦：有未完成项 / 「等用户的项」、本轮没动过面板（不跨回合唠叨）、已清空、读不到状态、脚本自身出错或超时（fail-open，不会把配置问题变成拦路虎）。
-- **实测**（kimi-code 0.41.0，2026-09-15 于 macOS；2026-09-16 在 WSL2 + Linux 上复验同一套）：`kimi -p "…建一个全 done 面板，别清空…"` 被拦下、提示写回上下文，模型随后自行清空；脚本行为另有 `verify.py` 的「钩子脚本行为」一项跑 5 种 fixture 兜底。
+- 脚本读 stdin 的 `session_id` → 从 `$KIMI_CODE_HOME/session_index.jsonl` 定位会话目录 → 扫 `agents/main/wire.jsonl` 尾部，取**最后一次** `TodoList` 调用的 `todos`，并记下它在哪个回合。
+- 判定：面板条目非空、且**全部** `status = "done"` → `exit 2` + stderr 提示（提示会写回上下文）；其余情况 `exit 0` 放行。
+- **跨回合只拦一次**：全 done 的面板若是**之前的回合**留下、本回合没碰过（典型：上一轮做完忘了清，用户接着问别的），第一次 Stop 拦下，并在 `~/.kimi-code/hooks/todo-panel-guard.state.json` 记下「这个会话、这个回合留下的面板已经提醒过」；之后再 Stop 就放行。这样面板不会烂尾，也不会每个回合都唠叨、更不会因为模型没照做而卡死。状态文件最多记 50 个会话，删掉它只会让旧面板再被提醒一次。
+- 刻意不拦：有未完成项 / 「等用户的项」、跨回合的旧面板已经提醒过一次、已清空、读不到状态、脚本自身出错或超时（fail-open，不会把配置问题变成拦路虎）。
+- **实测**（kimi-code 0.41.0，2026-09-15 于 macOS；2026-09-16 在 WSL2 + Linux 上复验同一套）：`kimi -p "…建一个全 done 面板，别清空…"` 被拦下、提示写回上下文，模型随后自行清空；脚本行为另有 `verify.py` 的「钩子脚本行为」一项跑 7 种 fixture 兜底。
 
 ## 安装
 
@@ -35,7 +36,7 @@ cd "$(mktemp -d)" && kimi -p "用 TodoList 建一个只有一条 done 任务的�
 #   期望：模型先被拦回（提示"任务都已 done 但面板没清空"），然后自行清空面板再结束
 ```
 
-fixture 覆盖的 5 种情形（`verify.py` 的「钩子脚本行为」一项）：全 done→拦（exit 2）｜有未完成→放行｜跨回合（上一轮留的面板）→放行｜本轮已清空→放行｜未知或过期 session_id→放行。
+fixture 覆盖的 7 种情形（`verify.py` 的「钩子脚本行为」一项）：全 done→拦（exit 2）｜有未完成→放行｜本轮已清空→放行｜未知或过期 session_id→放行｜跨回合有未完成→放行｜跨回合旧的全 done：首次→拦、再次→放行。
 
 ## 回滚 / 排错
 
@@ -43,7 +44,7 @@ fixture 覆盖的 5 种情形（`verify.py` 的「钩子脚本行为」一项）
 
   ```bash
   python3 "$SKILL_DIR/assets/patch-config.py" remove-hook Stop "python3 ~/.kimi-code/hooks/todo-panel-guard.py"
-  rm ~/.kimi-code/hooks/todo-panel-guard.py
+  rm ~/.kimi-code/hooks/todo-panel-guard.py ~/.kimi-code/hooks/todo-panel-guard.state.json
   ```
 - **`remove-hook` 的 command 必须与当初写入的逐字一致**（它按 event+command 精确匹配）：Windows 上装的时候写的是 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`，删除就得用这一串；照抄上面那种 `~` 写法会报"没找到匹配的 [[hooks]] 块"、钩子删不掉（退出码 2）。
 - 被拦得太频繁：说明面板确实还留着全 done 的条目，清空即可；确认不想要就把钩子摘掉。

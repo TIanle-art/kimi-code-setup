@@ -10,31 +10,13 @@ metadata:
 
 **这个 skill 管的是"把一台新机器上刚下载的 kimi-code 配到能用"，不是修 bug**——排错只是收尾的一环。细则按主题放在 `references/`，本文件只留主流程、判据和索引；手上的脚本放在 `assets/`。
 
-> **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**；**Linux 分支的 systemd 常驻、桥三层验证、钩子实时拦截实测于 WSL2 + kimi-code 0.41.0（Python 3.14，2026-09-16）**；**Windows 11 + kimi-code 2.0.0（Python 3.11.9，非管理员，2026-09-18）复跑：主流程与 `assets/verify.py --e2e` 全通过；同期修复中文 Windows 的钩子提示 GBK 乱码（`-X utf8`，见 `references/todo-panel-guard.md`）**。实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
+> **验证版本**：主流程在 macOS / Windows 11 / Linux（WSL2）上实测过，最近一次 Windows 11 + kimi-code 2.0.0（2026-09-18）`verify.py --e2e` 全通过；DeepSeek 后端 2026-11 实测。逐平台的版本与日期见 `references/maintainer.md`。实测结论都带「✅/❌ 实测」标注；机器上版本不同时先跑一次 `assets/verify.py`。
 
 ## 这个目录放在哪、怎么用
 
-- **怎么触发**：拷进目标机器的 `~/.kimi-code/skills/kimi-code-setup/` 后，直接说「**调试 kimi-code**」「配置 kimi-code」这类话即可——agent 按 description 命中后自动加载本文件，缺参数（Exa key、平台是 mac / win 还是 linux、要不要挂 MCP）它会先问清再动手，不用背固定提示词。
-- **作者机器（macOS，桌面正本）**：**正本在桌面** `~/Desktop/kimi-code-setup/`（改动只动这份；它同时是个 git 仓库，`origin` 指向公开仓库 https://github.com/TIanle-art/kimi-code-setup ，改完 `git push` 就更新公开版），**安装副本在** `~/.kimi-code/skills/kimi-code-setup/`（kimi 自动发现、直接能命中 `kimi-code-setup` skill 的那份）。改完正本跑一次同步（**必须带 `--exclude=.git`**，否则会把仓库元数据拷进 skill 目录），再体检确认：
-
-  ```bash
-  rsync -a --delete --exclude=.git ~/Desktop/kimi-code-setup/ ~/.kimi-code/skills/kimi-code-setup/
-  python3 ~/Desktop/kimi-code-setup/assets/verify.py | tail -3
-  ```
-
-  Windows 上没有 rsync（Git Bash 一般也不带），等价做法是 `robocopy` 或 `cp -r`；同步完**在 Git Bash 里**用 `diff -rq --exclude=.git 旧目录 新目录` 核对（**PowerShell 里别这么写**：`diff` 是 `Compare-Object` 的别名，不认 `-rq` / `--exclude`）：
-
-  ```powershell
-  # 下面两行只在 PowerShell / cmd 里跑——Git Bash 会把 /MIR /XD 改写成 D:/…/MIR 报错（实测）
-  robocopy "$env:USERPROFILE\Desktop\kimi-code-setup" "$env:USERPROFILE\.kimi-code\skills\kimi-code-setup" /MIR /XD .git /NFL /NDL
-  python "$env:USERPROFILE\Desktop\kimi-code-setup\assets\verify.py" | Select-Object -Last 3
-  ```
-
-  Git Bash 里想用 robocopy 就加 `MSYS_NO_PATHCONV=1` 关掉路径改写：`MSYS_NO_PATHCONV=1 robocopy "C:/Users/<你>/Desktop/kimi-code-setup" "C:/Users/<你>/.kimi-code/skills/kimi-code-setup" /MIR /XD .git /NFL /NDL`。
-- **WSL2（Linux）那台**：正本在 `~/projects/kimi-code-setup`（同一个 git 仓库、同一个 `origin`，改完 `git push` 就更新公开版），安装副本同样在 `~/.kimi-code/skills/kimi-code-setup/`，同步就是在那个目录里跑上面同一条命令（源路径换成 `./` 或 `~/projects/kimi-code-setup/`）。
-- **要用在别的机器上**：把整个目录拷到目标机器的 `~/.kimi-code/skills/kimi-code-setup/`（Windows：`%USERPROFILE%\.kimi-code\skills\kimi-code-setup\`），那里新开的 kimi 会话就会自动发现它；不拷也行，直接把文件带过去让 agent 读。
-- **本机想临时当 skill 用**：`kimi --skills-dir ~/Desktop --skills-dir ~/.kimi-code/skills`（实测：`--skills-dir` 会**替换**自动发现的目录，所以要补上原来的 `~/.kimi-code/skills` 才不丢 `kimi-webbridge` / `markitdown`；它按整棵子树递归扫描，指到桌面会把 `桌面/开源工具/` 下的 170+ 个 skill 一起带进来，很吵）。更省事的是让 agent 直接读本文件。
-- 下文里的 **`$SKILL_DIR`** 指这个 skill 所在目录：macOS 上正本是 `~/Desktop/kimi-code-setup`、WSL2 上是 `~/projects/kimi-code-setup`，安装副本都是 `~/.kimi-code/skills/kimi-code-setup`（两份内容一致，用哪份都行）；拷到目标机器后就是 `~/.kimi-code/skills/kimi-code-setup`（Windows 用 `%USERPROFILE%\.kimi-code\skills\kimi-code-setup`）。命令里出现 `$SKILL_DIR` 时按实际位置展开。
+- **怎么触发**：拷进目标机器的 `~/.kimi-code/skills/kimi-code-setup/`（Windows：`%USERPROFILE%\.kimi-code\skills\kimi-code-setup\`）后，直接说「**调试 kimi-code**」「配置 kimi-code」这类话即可——agent 按 description 命中后自动加载本文件，缺参数（平台、Exa key 还是用 DeepSeek）它会先问清再动手。不拷也行，直接把文件带过去让 agent 读。
+- 下文里的 **`$SKILL_DIR`** 指这个 skill 所在目录（通常就是上面那个安装路径）；命令里出现时按实际位置展开。
+- **维护这个 skill**（作者机器上的正本 / 安装副本同步、`--skills-dir` 临时加载、扩展规范、各平台验证版本）：见 `references/maintainer.md`。
 
 ## assets 里有什么（手脚）
 
@@ -61,7 +43,7 @@ metadata:
 |---|------|-----------|----------|
 | 0 | 装好 kimi-code + 摸清现状 + 备份 | `kimi --version` 有输出；知道配置目录、有没有配过 | 本文 |
 | 1 | LLM provider、模型与思考强度 | 新进程里能正常对话、思考强度符合预期 | 本文 |
-| 2 | 内置 WebSearch / FetchURL → 自己的 Exa | 三层验证全过；Windows 上自启项写完要回读确认（见细则第 3 节） | `references/web-tools-exa.md` |
+| 2 | 内置 WebSearch / FetchURL → 自己的 Exa（或 DeepSeek） | 三层验证全过；Windows 上自启项写完要回读确认（见细则第 3 节） | `references/web-tools-exa.md` |
 | 3 | 外部工具通道（exa 走 mcp.json） | 工具清单里出现 `mcp__exa__*` | 本文 |
 | 4 | 权限模式（Ask When Needed）与工具开关 | 启动就是期望的模式、工具没被 disabled | 本文 |
 | 5 | 策略文件 AGENTS.md | 模型知道何时用哪条通道；任务清单那三条约定也在里面 | 本文 |
@@ -161,7 +143,7 @@ effort = "max"                              # 全局兜底强度，其它模型�
 
 注意：跑过 `/login`（登录 Kimi 账号）会把 `config.services` 重写成 Kimi 托管服务，**第 2 步的 Exa 配置会被顶掉**；两者想共存得重新加回来。
 
-### 2. 内置联网工具 → 自己的 Exa
+### 2. 内置联网工具 → 自己的 Exa（或 DeepSeek）
 
 一句话：放脚本（`$SKILL_DIR/assets/exa-bridge.py`）→ 用 `assets/patch-config.py` 写两段 `[services.*]` → 起常驻（macOS launchd / Windows 计划任务·`HKCU\...\Run`·启动文件夹三选一 / Linux systemd user unit）→ 三层验证。
 
@@ -271,16 +253,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kim
 ```
 
 - 缓存率从会话日志 `agents/main/wire.jsonl` 的 `usage.record` 累计（与 `/usage` 面板同源），余额走 provider 的余额接口、缓存 5 分钟后台刷新。显示格式：`<模式徽章>  <模型名>  cache 98%  bal ¥44.50  ~/proj main`（2026-09-16 起去掉了 `cached … · uncached …` 明细段）；kimi-code 给的上限是 300ms，超时/失败自动回落内置布局。
-- **Windows 为什么不是直连 Python**（2026-09-16 实测：Windows 11 + kimi-code 0.43.1 + Store 版 Python 3.13）：`cmd.exe /d /s /c` + Python 启动 + 脚本自身 = 空闲 ≈240ms、机器忙/多开窗口 400ms+，300ms 预算站不住（runner 超时会 `taskkill /T /F` 丢弃结果，footer 就回落内置布局）。所以 Windows 改成两级结构：
-
-  ```bash
-  cp "$SKILL_DIR/assets/statusline.py" "$SKILL_DIR/assets/statusline-daemon.pyw" "$SKILL_DIR/assets/statusline-fast.c" ~/.kimi-code/
-  /c/msys64/mingw64/bin/gcc.exe -O2 -static -s -o ~/.kimi-code/statusline-fast.exe ~/.kimi-code/statusline-fast.c
-  python3 "$SKILL_DIR/assets/patch-config.py" --file "${KIMI_CODE_HOME:-$HOME/.kimi-code}/tui.toml" \
-    set status_line.command "C:/Users/<你>/.kimi-code/statusline-fast.exe"
-  ```
-
-  热路径 `statusline-fast.exe`（实测 **44–73ms**）只做：快照落盘 → 打印守护进程预渲染的行 → 心跳过期时拉起守护进程；渲染、桥探活、余额刷新全在常驻的 `statusline-daemon.pyw` 里（不在 runner 进程树里，不受 `taskkill /T` 连坐）。命令必须写成**无引号的正斜杠绝对路径**（cmd 的 `/s` 会吃掉引号）。**别照搬 `py -3`**：Store 版 Python 不带 `py` 启动器。
+- **Windows 不能直连 Python**（300ms 预算撑不住）：改用「`statusline-fast.exe` 热路径 + `statusline-daemon.pyw` 守护进程」两级结构，需要 MSYS2 gcc 编译一次；安装命令与原因见 `references/statusline.md`「安装」，部署用 `assets/deploy.py`。
 - 判据：`verify.py` 的状态栏几项全 PASS（含脚本行为自测）；`/reload-tui` 后 footer 第一行出现 `cache N%`。Windows 上第一次 tick 可能只有快照、没有行（守护进程 1–2 秒渲染完，下一次 tick 就有）——不是坏了，过程与排错见 `references/statusline.md`。
 - **Windows 上桥的兜底探活也归守护进程管**（拒连就拉活，实测 2 秒内自愈；细节见 `references/statusline.md`「已知边界」与 `references/web-tools-exa.md`）。
 - 自定义行会**整体替换** footer 第一行（脚本复刻了模式徽章 / 模型名 / cwd / git 分支，另加缓存率与余额）——想回到内置槽位就注释掉 `command`。机制、排错、回滚、已知边界都在 `references/statusline.md`。
@@ -320,27 +293,7 @@ python3 "$SKILL_DIR/assets/verify.py"          # 体检主入口
 python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重复表 / 解析 / services 段 / 钩子）
 ```
 
-体检结论怎么读：
-
-| 结果 | 含义 | 下一步 |
-|------|------|--------|
-| `出网不通` / `代理出口不通` | 网络 / 代理层问题，**不是 kimi-code 的错**——体检脚本会替你区分"要走代理的域名全超时但直连正常"（=代理出口挂了）和"整机没网" | 代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；恢复后重试即可，不用改配置。细节见 `references/web-tools-exa.md`「排错速查」 |
-| `services.*` 缺失或指向 Kimi 托管 | 大概被 `/login` 顶掉了 | 按第 2 步用补丁脚本加回来 |
-| `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。**Windows 上先等 30 秒左右**：状态栏脚本的兜底最多 30 秒探活一次，拒连就拉起——**优先跑启动文件夹的 `kimi-exa-bridge.lnk`**（ShellExecute 由 explorer 起、不在我们的进程树里，runner 超时那记 `taskkill /T /F` 杀不到它），没有快捷方式才回退 `Popen`（直接拉 `launch.pyw`）；重试间隔 30 秒（实测 2 秒内自愈），`statusline/bridge-watch.json` 里能看到 `last_ok`/`relaunched`——别按 5~10 秒预期；还不行再手动救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/web-tools-exa.md` 2.5 |
-| `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐（别靠把桥的 token 留空来绕，见下一行） |
-| `EXA_BRIDGE_TOKEN 留空` WARN | 桥不校验令牌：虽然只绑 127.0.0.1，本机任何进程都能免令牌调它、花你的 Exa 额度 | 生成一把令牌，写进常驻定义和 `config.toml` 两处 `services.*.api_key`（`patch-config.py set`），重启桥 |
-| `两处 services.*.api_key 不一致` | `moonshot_search` 与 `moonshot_fetch` 的令牌不是同一把——**只错一处时以前查不出来**，但 FetchURL 直打桥会 401 | 两处都该等于桥的 `EXA_BRIDGE_TOKEN`：用补丁脚本 `set` 对齐 |
-| `直打桥抓取 → …` 失败 | 桥的**抓取通道**坏了（Exa `contents` 报错 / key 没权限 / 额度耗尽）。这条最容易漏诊：桥对抓取失败一律回 200、把原因写进正文，CLI 会把它当正文吞掉，只有体检会直说 | 看消息里带的正文前 80 字符判断是哪类错；`/search` 正常而 `/fetch` 坏，基本是 Exa `contents` 侧的问题 |
-| `常驻定义令牌 … 不一致` / `常驻定义有 CR（\r）` | 常驻定义（plist / systemd unit / launch.pyw）里的令牌与 `config.toml` 对不上；最隐蔽的一种是 **CRLF 模板 sed 出来的定义**（令牌尾部多个回车） | 重新生成定义：`sed` 前先 `tr -d '\r' < 模板 \| sed …`；细节见 `references/web-tools-exa.md`「排错速查」 |
-| `桥脚本一致性 … 有漂移` / `守卫脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 跑 `python3 "$SKILL_DIR/assets/deploy.py" --bridge`（按内容比对重新拷贝，并重启桥）；只想自己动手就 `cp` 过去 + 重启桥。**注意**：如果改动还停在正本、没进安装副本，先做正本→安装副本那一步同步 |
-| `钩子：没有 [[hooks]]` / `没装 Todo 面板守卫` / `钩子脚本行为 … FAIL` | 第 6 步没做、规则被删、或脚本被改坏 | 按第 6 步重装（`ensure-hook` 幂等，重复跑安全）；钩子**新开会话**才生效 |
-| `状态栏：` 开头的几项（tui.toml 缺 `[status_line]` / command 为空 / 脚本缺失 / 行为自测 FAIL / Windows 热路径三件套缺失） | 第 7 步没做、`tui.toml` 被还原或被 `/reload-tui` 之外的手段改回、脚本被改坏 | 按第 7 步重装（补丁脚本幂等）；**`/reload-tui` 当场生效**，不用重启会话。Windows 上若只是 footer 没行/数字冻住，先看 `~/.kimi-code/statusline/daemon.heartbeat` 与 `daemon.log`——守护进程死了热路径下一次 tick（≤5 秒）会自动拉起 |
-| `状态栏脚本一致性 … 有漂移` / `状态栏守护脚本一致性 … 有漂移` | 改了 `assets/statusline.py` / `assets/statusline-daemon.pyw` 但没重新部署 | 跑 `python3 "$SKILL_DIR/assets/deploy.py"`（拷贝 + 自动重启守护进程让它加载新代码；`.c` 变过时它还会顺手重编 exe） |
-| `触发链：…` WARN | skill **既不在 `~/.kimi-code/skills/`、`~/.kimi-code/AGENTS.md` 里也没有指路**——表现是「skill 突然不生效」 | 把目录拷进 `~/.kimi-code/skills/kimi-code-setup/`，或在 `AGENTS.md` 里加一条含 "kimi-code-setup" 字样的触发约定（见「这个目录放在哪、怎么用」） |
-| `kimi doctor` 非 0 | `config.toml` / `tui.toml` 连 CLI 都读不进去（手改出语法错 / 补丁脚本被绕过） | `patch-config.py check` 只看结构，doctor 是"CLI 能否真的读进去"的最终判据；对照 `.bak` 还原或按对应章节重跑补丁脚本 |
-| `补丁脚本行为 … FAIL` | skill 里的 `patch-config.py` 被改坏（幂等 / 复验 / 删除逻辑） | 它是一切改配置动作的底座，先用备份或重新拷 skill 副本修好它，再动别的 |
-| 工具清单缺 `WebSearch` | `[tools] disabled` 关了它，或版本变了 | 看第 4 步；版本变了先核对本文的验证版本 |
-| 日志里同一条 WARN 反复出现（体检会报） | 后台任务空转；最常见是 `session index reconciliation failed`（实验特性 minidb read-model 在重建会话索引） | 它只是加速用的读模型，**不影响正常干活**；成功一次后会打印 `repaired drift` 自愈。持续刷屏时可以 `find ~/.kimi-code -name .DS_Store -delete` 清掉 Finder 垃圾再跑一次；仍不行就设 `KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL=false` 关掉该实验特性（**实测有效**：关掉后日志里连 `minidb query-store opening` 都不再出现） |
+体检结论怎么读、每类 FAIL / WARN 的下一步：见 **`references/health-check.md`**（按体检输出的开头文字查表）。**出网不通 / 代理出口不通是网络层问题，不是 kimi-code 的错**——别去改配置。
 
 什么时候该体检：**升级 kimi-code 之后、怀疑 `/login` 动过配置、桥挂过一恢复、把配置搬到新机器前后、以及每次改完 `config.toml`**。
 
@@ -367,15 +320,7 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 
 ## 扩展这个 skill
 
-- **细则放 `references/<主题>.md`，本文件只留 3–6 行要点 + 判据 + 链接**，文件再长也不挤上下文。
-- 加了新主题，记得在上面的主流程表里补一行，否则后来的人（或 agent）看不见它。
-- 脚本、配置模板、安装脚本放 `assets/`；**新增落地点优先复用 `patch-config.py`（写）和 `verify.py`（读）**，别再手写"追加/覆盖"逻辑。
-- **已实测 与 "按标准做法写的" 要分开标注**（例：Windows 那节就是这么标的），免得下次被当成已验证。
-- **一律 LF**（仓库已用 `.gitattributes` 钉住）：`assets/*.template` 要拿去 `sed` 生成常驻定义，CRLF 会让令牌尾部多一个 `\r`（实测 401）。Windows 侧检出后别再把行尾改回 CRLF。
-- **正本只保留一份**（本机的"安装副本"除外）：改动只动正本，改完按上面「放在哪」一节同步到 `~/.kimi-code/skills/kimi-code-setup/`；搬运/归档完别在别处再留第三份，前后用 `diff -rq 旧目录 新目录` 核对——`verify.py` 的「脚本漂移」只比对 **`exa-bridge.py` / `todo-panel-guard.py` / `statusline.py` / `statusline-daemon.pyw`** 这 4 个部署脚本（对应关系见上文），**不比对** `patch-config.py`、`verify.py`、`deploy.py`、`.template` 生成出的常驻定义、`statusline-fast.c` 编出的 exe、`kimi-web-status.user.js`，也不比对任何文档——所以改完部署脚本要跑一次 `assets/deploy.py`（幂等）把它们送到落地点，别靠记性。
-- 正本是个 git 仓库（`origin` = 公开仓库）：动手前 `git status` 确认工作区干净，改完 `git commit` + `git push`。**别再用 `cp -a` 做目录备份**——git 就是备份，`cp -a` 只会把 `.git` / `__pycache__` 一起拷进去。
-- 换了 kimi-code 版本，先跑 `verify.py`，再更新顶部那句"验证版本"。
-- 改了目录名或位置，记得同步：frontmatter 的 `name`、本文件与 `references/` 里的 `$SKILL_DIR` 说明、以及作者机器上 `~/.kimi-code/AGENTS.md` 里的指路与触发约定。
+细则放 `references/<主题>.md`、本文件只留要点 + 判据 + 链接；脚本放 `assets/`，写配置复用 `patch-config.py`、读复用 `verify.py`。完整规范见 `references/maintainer.md`。
 
 ## 参考：基线快照（搬配置 / 对照用）
 
