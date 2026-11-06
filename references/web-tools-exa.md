@@ -45,7 +45,7 @@ kimi-code 侧读取优先级：环境变量 `KIMI_WEB_SEARCH_BASE_URL` / `KIMI_W
 | 参数 | 取值 |
 |------|------|
 | Exa API key | 问用户要（UUID 形状，dashboard.exa.ai 可查）；已配置过的机器上可取自 `~/.kimi-code/mcp.json` 的 `mcpServers.exa.headers.x-api-key` |
-| 本地令牌 | `python3 -c "import secrets;print(secrets.token_hex(16))"`（跨平台）或 `openssl rand -hex 16`；可留空跳过校验 |
+| 本地令牌 | `python3 -c "import secrets;print(secrets.token_hex(16))"`（跨平台）或 `openssl rand -hex 16`；技术上可留空跳过校验，但本机任何进程都能免令牌调桥、花你的 Exa 额度，`verify.py` 会报 WARN——**别留空** |
 | 端口 | 默认 `8787`，被占用就换（`EXA_BRIDGE_PORT`） |
 | Python | ≥ 3.9，纯标准库。macOS `command -v python3`；Windows `where pythonw` |
 
@@ -128,7 +128,7 @@ New-Item -ItemType Directory -Force -Path $dst | Out-Null
 Copy-Item "$skillDir\assets\exa-bridge.py" "$dst\exa-bridge.py" -Force
 
 $exaKey = ''            # 留空 = 桥改读 mcp.json 的 x-api-key（推荐，省得把 key 散在三处）
-$token  = '<本地令牌>'   # 留空 = 不校验；填了就要和 config.toml 两处 [services].api_key 一致
+$token  = '<本地令牌>'   # 留空 = 不校验（verify.py 报 WARN，别留空）；填了就要和 config.toml 两处 [services].api_key 一致
 $tpl = Get-Content "$skillDir\assets\windows-launch.pyw.template" -Raw
 $tpl = $tpl.Replace('__SCRIPT__', "$dst\exa-bridge.py".Replace('\','/')) `
            .Replace('__LOG__', "$dst\bridge.log".Replace('\','/')) `

@@ -324,8 +324,9 @@ python3 "$SKILL_DIR/assets/patch-config.py" check   # 只看配置结构（重�
 | `出网不通` / `代理出口不通` | 网络 / 代理层问题，**不是 kimi-code 的错**——体检脚本会替你区分"要走代理的域名全超时但直连正常"（=代理出口挂了）和"整机没网" | 代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；恢复后重试即可，不用改配置。细节见 `references/web-tools-exa.md`「排错速查」 |
 | `services.*` 缺失或指向 Kimi 托管 | 大概被 `/login` 顶掉了 | 按第 2 步用补丁脚本加回来 |
 | `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。**Windows 上先等 30 秒左右**：状态栏脚本的兜底最多 30 秒探活一次，拒连就拉起——**优先跑启动文件夹的 `kimi-exa-bridge.lnk`**（ShellExecute 由 explorer 起、不在我们的进程树里，runner 超时那记 `taskkill /T /F` 杀不到它），没有快捷方式才回退 `Popen`（直接拉 `launch.pyw`）；重试间隔 30 秒（实测 2 秒内自愈），`statusline/bridge-watch.json` 里能看到 `last_ok`/`relaunched`——别按 5~10 秒预期；还不行再手动救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/web-tools-exa.md` 2.5 |
-| `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐，或把桥的 token 留空 |
-| `两处 services.*.api_key 不一致` | `moonshot_search` 与 `moonshot_fetch` 的令牌不是同一把——**只错一处时以前查不出来**，但 FetchURL 直打桥会 401 | 两处都该等于桥的 `EXA_BRIDGE_TOKEN`：用补丁脚本 `set` 对齐（想不出令牌就两边留空） |
+| `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐（别靠把桥的 token 留空来绕，见下一行） |
+| `EXA_BRIDGE_TOKEN 留空` WARN | 桥不校验令牌：虽然只绑 127.0.0.1，本机任何进程都能免令牌调它、花你的 Exa 额度 | 生成一把令牌，写进常驻定义和 `config.toml` 两处 `services.*.api_key`（`patch-config.py set`），重启桥 |
+| `两处 services.*.api_key 不一致` | `moonshot_search` 与 `moonshot_fetch` 的令牌不是同一把——**只错一处时以前查不出来**，但 FetchURL 直打桥会 401 | 两处都该等于桥的 `EXA_BRIDGE_TOKEN`：用补丁脚本 `set` 对齐 |
 | `直打桥抓取 → …` 失败 | 桥的**抓取通道**坏了（Exa `contents` 报错 / key 没权限 / 额度耗尽）。这条最容易漏诊：桥对抓取失败一律回 200、把原因写进正文，CLI 会把它当正文吞掉，只有体检会直说 | 看消息里带的正文前 80 字符判断是哪类错；`/search` 正常而 `/fetch` 坏，基本是 Exa `contents` 侧的问题 |
 | `常驻定义令牌 … 不一致` / `常驻定义有 CR（\r）` | 常驻定义（plist / systemd unit / launch.pyw）里的令牌与 `config.toml` 对不上；最隐蔽的一种是 **CRLF 模板 sed 出来的定义**（令牌尾部多个回车） | 重新生成定义：`sed` 前先 `tr -d '\r' < 模板 \| sed …`；细节见 `references/web-tools-exa.md`「排错速查」 |
 | `桥脚本一致性 … 有漂移` / `守卫脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 跑 `python3 "$SKILL_DIR/assets/deploy.py" --bridge`（按内容比对重新拷贝，并重启桥）；只想自己动手就 `cp` 过去 + 重启桥。**注意**：如果改动还停在正本、没进安装副本，先做正本→安装副本那一步同步 |
