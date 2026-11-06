@@ -1,9 +1,9 @@
 ---
 name: kimi-code-setup
 description: |
-  新机器上把 kimi-code 从零配到可用（macOS / Windows / Linux）：provider 与模型、内置 WebSearch/FetchURL 接自己的 Exa（exa-bridge）、MCP、权限、AGENTS.md、Todo 守卫钩子、状态栏；也支持只读体检。触发：「调试/配置 kimi-code」「体检」、WebSearch 不能用、FetchURL 撞 WEB_PRIVATE_ADDRESS、exa-bridge 挂了、/login 顶掉配置。
+  新机器上把 kimi-code 从零配到可用（macOS / Windows / Linux）：provider 与模型、内置 WebSearch/FetchURL 接自己的 Exa 或 DeepSeek Search/Fetch API（exa-bridge，没有 Exa key 时自动走 DeepSeek）、MCP、权限、AGENTS.md、Todo 守卫钩子、状态栏；也支持只读体检。触发：「调试/配置 kimi-code」「体检」、WebSearch 不能用、没有 Exa key 怎么联网、FetchURL 撞 WEB_PRIVATE_ADDRESS、exa-bridge 挂了、/login 顶掉配置。
 metadata:
-  version: "3.8.0"
+  version: "4.0.0"
 ---
 
 # 全新 kimi-code 落地（新机器开箱配置）
@@ -114,7 +114,7 @@ pgrep -fl exa-bridge           # 同上，但只有 macOS / Linux 有 pgrep（Wi
 
 - ① **现在去注册（推荐）**：dashboard.exa.ai 注册 → 把 key 贴回来（**2026-09 时**新账号送 $20、之后 Free Tier 每月 $10——营销数字会变，以 dashboard 为准）；两条通道都能建，花的也是他自己的额度。
 - ② **先用匿名 MCP 顶着**：只写 `mcp.json` 的 `{"url": "https://mcp.exa.ai/mcp"}`、**不要 `headers`**；代价是只有 MCP 通道可用（上限未测），**内置 `WebSearch`/`FetchURL` 建不了**——桥调 `api.exa.ai` 必须要 key，这时它俩只能走 Kimi 托管（要 `/login`），说明白别让用户以为坏了。
-- ③ **不用 Exa，改用 DeepSeek 的 Search / Fetch API**（2026-10-17 上线，`POST api.deepseek.com/v1/tools/search` 与 `/v1/tools/fetch`，与对话**共用同一把 DeepSeek key**；按公开资料约 $0.75 / 千次成功请求，失败/空结果不计费，每账号 5 次/秒——以官方文档为准）：桥照样建，只是 `EXA_API_KEY` 留空——桥发现没有 Exa key、但 `config.toml` 的 `[providers.deepseek].api_key`（或 `DEEPSEEK_API_KEY`）有值时**自动改走 DeepSeek**，内置 `WebSearch` / `FetchURL` 两条都能用；`mcp.json` 不写 exa，表里的 `mcp__exa__*` 那几行能力（批量抓取、`agent_run`）就没有了。**⚠️ 这条按公开资料实现、未实测**：响应字段做了多写法容错，装完务必跑 `verify.py --e2e` 确认；细节见 `references/web-tools-exa.md`「收集参数」第 3 条。
+- ③ **不用 Exa，改用 DeepSeek 的 Search / Fetch API**（2026-10-17 上线，`POST api.deepseek.com/v1/tools/search` 与 `/v1/tools/fetch`，与对话**共用同一把 DeepSeek key**；按公开资料约 $0.75 / 千次成功请求，失败/空结果不计费，每账号 5 次/秒——以官方文档为准）：桥照样建，只是 `EXA_API_KEY` 留空——桥发现没有 Exa key、但 `config.toml` 的 `[providers.deepseek].api_key`（或 `DEEPSEEK_API_KEY`）有值时**自动改走 DeepSeek**，内置 `WebSearch` / `FetchURL` 两条都能用；`mcp.json` 不写 exa，表里的 `mcp__exa__*` 那几行能力（批量抓取、`agent_run`）就没有了。**✅ 2026-11 真机实测通过**（搜索 / 抓取都返回正文）；装完照例跑 `verify.py --e2e` 确认；细节见 `references/web-tools-exa.md`「收集参数」第 3 条。
 
 三条路的完整细节、② 之后怎么升级成正式 key、非交互（`kimi -p`）没有提问通道时怎么办，都在 `references/web-tools-exa.md` 的「收集参数」一节；**key 不要在回复正文里回显**（写进 `config.toml` / `mcp.json` / plist 即可）。
 
