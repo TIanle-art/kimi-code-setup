@@ -508,7 +508,7 @@ def check_logs(home):
 
 
 def hook_blocks_correctly(script):
-    """用临时 KIMI_CODE_HOME + 假会话日志验证守卫脚本的 5 种情形。不碰真实数据。"""
+    """用临时 KIMI_CODE_HOME + 假会话日志验证守卫脚本的 7 种情形。不碰真实数据。"""
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
         probe_home = Path(tmp) / "home"
@@ -542,13 +542,16 @@ def hook_blocks_correctly(script):
             "全 done → 拦（期望 2）": (run([begin("t1"), todo("t1", done)]), 2),
             "有未完成 → 放行": (run([begin("t1"), todo("t1", pend)]), 0),
             "本轮已清空 → 放行": (run([begin("t1"), todo("t1", [])]), 0),
-            "跨回合（上一轮留的全 done）→ 放行": (run([begin("t1"), todo("t1", done), begin("t2")]), 0),
             "未知 session_id → 放行": (run([begin("t1"), todo("t1", done)], session="nope"), 0),
+            "跨回合有未完成 → 放行": (run([begin("t1"), todo("t1", pend), begin("t2")]), 0),
+            # 下面两例有先后：第一次拦会写状态文件，第二次读到"已拦过"就放行
+            "跨回合旧的全 done（首次）→ 拦一次": (run([begin("t1"), todo("t1", done), begin("t2")]), 2),
+            "跨回合旧的全 done（再次）→ 放行": (run([begin("t1"), todo("t1", done), begin("t2")]), 0),
         }
     bad = ["%s：实际 %s" % (name, got) for name, (got, _want) in cases.items() if got != _want]
     if bad:
         return False, "行为不符：%s" % "、".join(bad)
-    return True, "5 种情形全过（全 done→拦；未完成 / 已清空 / 跨回合 / 未知 session→放行）"
+    return True, "7 种情形全过（全 done→拦；未完成 / 已清空 / 未知 session→放行；跨回合旧面板只拦一次）"
 
 
 def check_hooks(home, cfg):
