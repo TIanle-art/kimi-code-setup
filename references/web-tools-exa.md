@@ -56,7 +56,7 @@ kimi-code 侧读取优先级：环境变量 `KIMI_WEB_SEARCH_BASE_URL` / `KIMI_W
 3. **不用 Exa，改用 DeepSeek 的 Search / Fetch API**（⚠️ **按公开资料实现、未实测**；官方文档 https://api-docs.deepseek.com/guides/search/ ）：
    - **是什么**：DeepSeek 2026-10-17 上线的两个独立接口——`POST https://api.deepseek.com/v1/tools/search`（`{"query": ≤128 字符, "count": 1–50}` → `results[]`，每条有标题、URL、正文/摘要）与 `POST https://api.deepseek.com/v1/tools/fetch`（抓单页，返回清洗后的 Markdown）；`Authorization: Bearer <DeepSeek key>`，**与对话用的是同一把 key**。公开资料给的价格约 $0.75 / 千次成功请求（另有报道写 ¥5 / 千次），失败、超时、空结果不计费，每账号各 5 次/秒——**以官方定价页为准**。
    - **怎么接**：第 1~3 节照做，只有两处不同：① 常驻定义里 `EXA_API_KEY` **留空**（模板不用改）；② 确认 `config.toml` 的 `[providers.deepseek].api_key` 有值（对话 provider 是 DeepSeek 的机器天然满足），或在常驻定义里另加 `DEEPSEEK_API_KEY`。桥启动时发现没有 Exa key、有 DeepSeek key，就**自动改走 DeepSeek**（日志里 `backend=deepseek`，`/health` 也带 `"backend": "deepseek"`）；想强制就设 `EXA_BRIDGE_BACKEND=deepseek`。
-   - **代价**：没有 exa MCP（`mcp.json` 不写 exa），批量抓取、`maxCharacters`、`agent_run` 这些超集能力没有；AGENTS.md 里「切 `mcp__exa__*`」那几句要删掉，桥挂了就只剩 Bash curl。
+   - **代价**：没有 exa MCP（`mcp.json` 不写 exa），批量抓取、`maxCharacters`、`agent_run` 这些超集能力没有；AGENTS.md 用 `SKILL.md` 第 5 步的 **B 段**（不提 `mcp__exa__*`），桥挂了就只剩 Bash curl。
    - **为什么标「未实测」**：写这段时拿不到官方文档原文，响应字段名是从二手资料拼出来的；桥对字段做了多写法容错（`content`/`snippet`/`summary`、外面多包一层 `data` 都认），但仍要在真机上跑一次 `verify.py --e2e`，搜索/抓取都返回正文才算通。字段对不上时 `/search` 会回空结果、`/fetch` 回 `[exa-bridge] no content returned … (deepseek)`——照着官方文档改 `deepseek_search` / `deepseek_fetch` 两个函数即可。
    - **兜底**：DeepSeek 也不想用，就退回"用 Bash curl 抓指定页面"（没有搜索能力，只有抓取）。
 
