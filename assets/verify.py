@@ -239,10 +239,17 @@ def check_bridge(base_url, token):
         add("FAIL", "桥 /health 返回了非 JSON：%s" % body[:120])
         return
     add("PASS", "桥在跑：%s（端口 %s，每次搜 %s 条）" % (health_url, port.group(1) if port else "?", info.get("results")))
-    if info.get("key"):
+    backend = info.get("backend") or "exa"          # 旧版桥没有这个字段 = exa
+    if backend == "deepseek":
+        if info.get("key"):
+            add("PASS", "桥走 DeepSeek Search/Fetch，已拿到 DeepSeek key")
+        else:
+            add("WARN", "桥走 DeepSeek，但没拿到 key（设 DEEPSEEK_API_KEY，或 config.toml 的 [providers.deepseek].api_key）")
+    elif info.get("key"):
         add("PASS", "桥已拿到 Exa key")
     else:
-        add("WARN", "桥没拿到 Exa key（设 EXA_API_KEY，或在 mcp.json 写 mcpServers.exa.headers.x-api-key）")
+        add("WARN", "桥没拿到 Exa key（设 EXA_API_KEY，或在 mcp.json 写 mcpServers.exa.headers.x-api-key；"
+                    "不用 Exa 就给 DeepSeek key，桥会自动改走 DeepSeek）")
     if not info.get("status"):
         add("WARN", "桥没有 /status 端点（旧版脚本）—— kimi web 端的小面板用不了；"
                     "部署 assets/exa-bridge.py 后重启桥（macOS: launchctl kickstart -k）")

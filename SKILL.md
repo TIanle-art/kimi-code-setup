@@ -40,7 +40,7 @@ metadata:
 
 | 脚本 | 干什么 |
 |------|--------|
-| `assets/exa-bridge.py` | 内置 WebSearch / FetchURL 的适配器（转调 Exa），部署到 `~/.kimi-code/exa-bridge/`；本文件里的副本 = 机器上在跑的那份 |
+| `assets/exa-bridge.py` | 内置 WebSearch / FetchURL 的适配器（转调 Exa；没有 Exa key 但有 DeepSeek key 时自动改调 DeepSeek Search/Fetch，`EXA_BRIDGE_BACKEND` 可强制），部署到 `~/.kimi-code/exa-bridge/`；本文件里的副本 = 机器上在跑的那份 |
 | `assets/launchagent.plist.template` | macOS LaunchAgent 模板（占位符替换，别手写 XML） |
 | `assets/systemd-user.service.template` | Linux systemd 用户单元模板（同一套占位符；**2026-09-16 在 WSL2 实测通过**）。生成时的 `sed` 前面必须先 `tr -d '\r'`——CRLF 模板会把 `\r` 带进令牌，桥直接 401（见 `references/web-tools-exa.md`） |
 | `assets/windows-launch.pyw.template` | Windows 桥启动器模板（给 `pythonw.exe` 用）：替桥写进 `EXA_BRIDGE_TOKEN` / `EXA_API_KEY`，并把 stdout/stderr 重定向到 `bridge.log`——计划任务与启动文件夹都塞不进环境变量，`pythonw` 又没有控制台。部署到 `~/.kimi-code/exa-bridge/launch.pyw`，见 `references/web-tools-exa.md` 第 3 节（Windows） |
@@ -115,7 +115,7 @@ pgrep -fl exa-bridge           # 同上，但只有 macOS / Linux 有 pgrep（Wi
 
 - ① **现在去注册（推荐）**：dashboard.exa.ai 注册 → 把 key 贴回来（**2026-09 时**新账号送 $20、之后 Free Tier 每月 $10——营销数字会变，以 dashboard 为准）；两条通道都能建，花的也是他自己的额度。
 - ② **先用匿名 MCP 顶着**：只写 `mcp.json` 的 `{"url": "https://mcp.exa.ai/mcp"}`、**不要 `headers`**；代价是只有 MCP 通道可用（上限未测），**内置 `WebSearch`/`FetchURL` 建不了**——桥调 `api.exa.ai` 必须要 key，这时它俩只能走 Kimi 托管（要 `/login`），说明白别让用户以为坏了。
-- ③ **干脆不要 Exa**：自建 SearXNG 后把 `[services.moonshot_search].base_url` 指过去，或退回"用 Bash curl 抓指定页面"；没有搜索能力，只有抓取。
+- ③ **不用 Exa，改用 DeepSeek 的 Search / Fetch API**（2026-10-17 上线，`POST api.deepseek.com/v1/tools/search` 与 `/v1/tools/fetch`，与对话**共用同一把 DeepSeek key**；按公开资料约 $0.75 / 千次成功请求，失败/空结果不计费，每账号 5 次/秒——以官方文档为准）：桥照样建，只是 `EXA_API_KEY` 留空——桥发现没有 Exa key、但 `config.toml` 的 `[providers.deepseek].api_key`（或 `DEEPSEEK_API_KEY`）有值时**自动改走 DeepSeek**，内置 `WebSearch` / `FetchURL` 两条都能用；`mcp.json` 不写 exa，表里的 `mcp__exa__*` 那几行能力（批量抓取、`agent_run`）就没有了。**⚠️ 这条按公开资料实现、未实测**：响应字段做了多写法容错，装完务必跑 `verify.py --e2e` 确认；细节见 `references/web-tools-exa.md`「收集参数」第 3 条。
 
 三条路的完整细节、② 之后怎么升级成正式 key、非交互（`kimi -p`）没有提问通道时怎么办，都在 `references/web-tools-exa.md` 的「收集参数」一节；**key 不要在回复正文里回显**（写进 `config.toml` / `mcp.json` / plist 即可）。
 

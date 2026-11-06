@@ -17,9 +17,19 @@ while searches and fetches bill to your Exa account.
                    浏览器用户脚本用 GM_xmlhttpRequest 才能取）
   GET  /panel   -> 一个自包含小页面，每 5s 轮询 /status 显示同样两个数字
 
+Backends (EXA_BRIDGE_BACKEND = exa | deepseek; unset = auto):
+  exa       Exa /search + /contents (default when an Exa key is found)
+  deepseek  DeepSeek POST /v1/tools/search + /v1/tools/fetch (2026-10 上线)
+            auto 模式下没有 Exa key、但有 DeepSeek key 时自动选它——
+            所以常驻定义模板不用改：EXA_API_KEY 留空即可
+            ⚠️ 按公开资料实现、未实测：响应字段按多种写法容错解析，体检 --e2e 见分晓
+
 Environment:
   EXA_API_KEY             Exa key; falls back to ~/.kimi-code/mcp.json
                           (mcpServers.exa.headers.x-api-key) when unset
+  DEEPSEEK_API_KEY        DeepSeek key（与对话共用同一把）；falls back to
+                          config.toml [providers.deepseek].api_key when unset
+  EXA_BRIDGE_BACKEND      exa | deepseek；不设 = 自动
   EXA_BRIDGE_TOKEN        bearer token clients must present (empty = accept any)
   EXA_BRIDGE_PORT         listen port, default 8787
   EXA_BRIDGE_NUM_RESULTS  search results per query, default 5
@@ -40,6 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 EXA_API_BASE = os.environ.get("EXA_API_BASE", "https://api.exa.ai").rstrip("/")
+DEEPSEEK_API_BASE = os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com").rstrip("/")
 PORT = int(os.environ.get("EXA_BRIDGE_PORT", "8787"))
 NUM_RESULTS = int(os.environ.get("EXA_BRIDGE_NUM_RESULTS", "5"))
 SNIPPET_CHARS = 400
@@ -67,6 +78,114 @@ def api_key() -> str:
     return ""
 
 
+def deepseek_key() -> str:
+    """DeepSeek key：环境变量优先，否则读 config.toml 的 [providers.deepseek].api_key。
+
+    对话 provider 就是 DeepSeek 的机器上一把 key 两用，不必再往常驻定义里写一份。
+    """
+    key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if key:
+        return key
+    try:
+        with open(os.path.join(KIMI_HOME, "config.toml"), "rb") as fh:
+            raw = fh.read()
+        try:
+            import tomllib                              # Python 3.11+
+            provider = (tomllib.loads(raw.decode("utf-8")).get("providers") or {}).get("deepseek") or {}
+            return str(provider.get("api_key") or "").strip()
+        except ImportError:                             # 3.9 / 3.10：只认 [providers.deepseek] 段里的 api_key
+            m = re.search(r'^\[providers\.deepseek\]\s*$(.*?)(?=^\[|\Z)', raw.decode("utf-8", "replace"), re.M | re.S)
+            k = m and re.search(r'^api_key\s*=\s*"([^"]*)"', m.group(1), re.M)
+            return k.group(1).strip() if k else ""
+    except Exception:
+        return ""
+
+
+def backend() -> str:
+    """exa | deepseek。显式设了就听它的；没设时有 Exa key 用 exa，否则有 DeepSeek key 用 deepseek。"""
+    forced = os.environ.get("EXA_BRIDGE_BACKEND", "").strip().lower()
+    if forced in ("exa", "deepseek"):
+        return forced
+    if api_key():
+        return "exa"
+    return "deepseek" if deepseek_key() else "exa"
+
+
+def backend_key() -> str:
+    return deepseek_key() if backend() == "deepseek" else api_key()
+
+
+def deepseek_post(path: str, payload: dict, timeout: float) -> dict:
+    request = urllib.request.Request(
+        DEEPSEEK_API_BASE + path,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {deepseek_key()}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8", "replace"))
+
+
+def _first_str(item: dict, *fields: str) -> str:
+    for field in fields:
+        value = item.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _result_list(data) -> list:
+    """DeepSeek 响应的结果数组：公开资料只说「results 数组」，这里顺带容忍外面再包一层 data。"""
+    if isinstance(data, list):
+        return data
+    if not isinstance(data, dict):
+        return []
+    for container in (data, data.get("data") if isinstance(data.get("data"), dict) else {}):
+        for field in ("results", "search_results", "items"):
+            if isinstance(container.get(field), list):
+                return container[field]
+    return data["data"] if isinstance(data.get("data"), list) else []
+
+
+def deepseek_search(query: str) -> list:
+    # query 上限 128 字符（公开资料）；超了截断，别让整次搜索 400
+    data = deepseek_post("/v1/tools/search", {"query": query[:128], "count": NUM_RESULTS}, timeout=25)
+    results = []
+    for item in _result_list(data):
+        if not isinstance(item, dict):
+            continue
+        url = _first_str(item, "url", "link")
+        if not url:
+            continue
+        entry = {
+            "title": _first_str(item, "title", "name"),
+            "url": url,
+            "snippet": _first_str(item, "snippet", "summary", "content", "text").replace("\n", " ")[:SNIPPET_CHARS],
+        }
+        date = _first_str(item, "published_date", "publish_time", "date", "publishedDate")
+        if date:
+            entry["date"] = date
+        entry["site_name"] = _first_str(item, "site_name", "site") or site_name(url)
+        if not entry["site_name"]:
+            del entry["site_name"]
+        results.append(entry)
+    return results
+
+
+def deepseek_fetch(url: str) -> tuple:
+    """返回 (标题, 正文)；正文为空时由调用方报「no content」。"""
+    data = deepseek_post("/v1/tools/fetch", {"url": url}, timeout=45)
+    candidates = [data] if isinstance(data, dict) else []
+    if isinstance(data, dict) and isinstance(data.get("data"), dict):
+        candidates.append(data["data"])
+    candidates += [r for r in _result_list(data) if isinstance(r, dict)]
+    for item in candidates:
+        text = _first_str(item, "content", "markdown", "text", "body")
+        if text:
+            return _first_str(item, "title"), text[:PAGE_TEXT_CHARS]
+    return "", ""
+
+
 def exa_post(path: str, payload: dict, timeout: float) -> dict:
     request = urllib.request.Request(
         EXA_API_BASE + path,
@@ -84,7 +203,7 @@ def describe_error(exc: Exception) -> str:
             body = exc.read().decode("utf-8", "replace").strip()
         except Exception:
             body = ""
-        return f"Exa HTTP {exc.code}: {body[:500]}"
+        return f"{'DeepSeek' if backend() == 'deepseek' else 'Exa'} HTTP {exc.code}: {body[:500]}"
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -108,6 +227,11 @@ def handle_search(body: dict) -> tuple[int, dict]:
     query = str(body.get("text_query", "")).strip()
     if not query:
         return 400, {"error": "missing text_query"}
+    if backend() == "deepseek":
+        try:
+            return 200, {"search_results": deepseek_search(query)}
+        except Exception as exc:
+            return 502, {"error": describe_error(exc)}
     payload = {
         "query": query,
         "numResults": NUM_RESULTS,
@@ -146,6 +270,14 @@ def handle_fetch(body: dict) -> tuple[int, str, str]:
         url = str(body.get("url", "")).strip()
         if not url:
             return 200, "text/plain", "[exa-bridge] missing url"
+        if backend() == "deepseek":
+            try:
+                title, text = deepseek_fetch(url)
+            except Exception as exc:
+                return 200, "text/markdown", f"[exa-bridge] fetch failed: {describe_error(exc)}"
+            if not text:
+                return 200, "text/markdown", f"[exa-bridge] no content returned for {url} (deepseek)"
+            return 200, "text/markdown", f"# {title}\n\n{text}" if title else text
         payload = {"urls": [url], "text": {"maxCharacters": PAGE_TEXT_CHARS}}
         try:
             data = exa_post("/contents", payload, timeout=45)
@@ -331,7 +463,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/health":
             self._json(200, {"ok": True, "port": PORT, "results": NUM_RESULTS,
-                             "key": bool(api_key()), "status": True})
+                             "key": bool(backend_key()), "backend": backend(), "status": True})
         elif path == "/status":
             if not self._local_host():
                 self._json(403, {"ok": False, "error": "forbidden host"})
@@ -423,14 +555,15 @@ def bridge_already_running() -> bool:
 
 
 def main():
-    if not api_key():
-        sys.stderr.write("exa-bridge: no Exa API key (set EXA_API_KEY or mcp.json header)\n")
+    if not backend_key():
+        sys.stderr.write("exa-bridge: no API key (set EXA_API_KEY / mcp.json header for Exa, "
+                         "or DEEPSEEK_API_KEY / config.toml [providers.deepseek] for DeepSeek)\n")
     if bridge_already_running():
         log_line(f"exa-bridge: 端口 {PORT} 上已经有一个桥在跑（/health 返回 ok）——本次不再启动"
                  f"第二个，直接退出；要重启先把原来那个停掉（macOS: launchctl kickstart -k）\n")
         sys.exit(0)
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    sys.stderr.write(f"exa-bridge listening on http://127.0.0.1:{PORT} (results={NUM_RESULTS})\n")
+    sys.stderr.write(f"exa-bridge listening on http://127.0.0.1:{PORT} (backend={backend()}, results={NUM_RESULTS})\n")
     server.serve_forever()
 
 

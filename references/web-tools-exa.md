@@ -49,11 +49,16 @@ kimi-code 侧读取优先级：环境变量 `KIMI_WEB_SEARCH_BASE_URL` / `KIMI_W
 | 端口 | 默认 `8787`，被占用就换（`EXA_BRIDGE_PORT`） |
 | Python | ≥ 3.9，纯标准库。macOS `command -v python3`；Windows `where pythonw` |
 
-**没有 Exa key 就别往下做这一节**：桥调 `api.exa.ai` 必须要 key，否则调不通。三条退路，按用户情况挑（这是 `SKILL.md` 第 0 步「用户说"我没有 Exa key"时给他三条路挑」那张小表的细则版；**key 别回显在回复正文里**）：
+**既没有 Exa key、也不走下面第 3 条（DeepSeek）就别往下做这一节**：桥调 `api.exa.ai` 必须要 key，否则调不通。三条退路，按用户情况挑（这是 `SKILL.md` 第 0 步「用户说"我没有 Exa key"时给他三条路挑」那张小表的细则版；**key 别回显在回复正文里**）：
 
 1. **去注册**（推荐）：dashboard.exa.ai 注册即得 key——**2026-09 时**新账号送 $20（约 2,800 次搜索），之后 Free Tier 每月再送 $10（营销数字会变，以 dashboard 为准）；两条通道都能建（内置 + MCP），花的也是他自己的额度。拿到 key 再回来做这一节。
 2. **先不建桥，只挂匿名 MCP**：`mcp.json` 里只写 `{"url": "https://mcp.exa.ai/mcp"}`、**不要 `headers`**——实测（2026-09）不带任何 key 也能 `web_search_exa` / `web_fetch_exa`。代价：只有 MCP 通道可用（额度与速率由 Exa 服务端限制，上限未测）；内置 `WebSearch` / `FetchURL` 用不了（它们会回落到需要 `/login` 的 Kimi 托管服务），联网只能走 MCP 工具。**选了 ② 之后想升级**：注册拿 key → 填 plist 的 `EXA_API_KEY`（或 `mcp.json` 的 `x-api-key`）→ 按第 1~3 节建桥 → 重启。
-3. **干脆不要 Exa**：自建 SearXNG 后把 `[services.moonshot_search].base_url` 指过去；或退回"用 Bash curl 抓指定页面"——没有搜索能力，只有抓取。
+3. **不用 Exa，改用 DeepSeek 的 Search / Fetch API**（⚠️ **按公开资料实现、未实测**；官方文档 https://api-docs.deepseek.com/guides/search/ ）：
+   - **是什么**：DeepSeek 2026-10-17 上线的两个独立接口——`POST https://api.deepseek.com/v1/tools/search`（`{"query": ≤128 字符, "count": 1–50}` → `results[]`，每条有标题、URL、正文/摘要）与 `POST https://api.deepseek.com/v1/tools/fetch`（抓单页，返回清洗后的 Markdown）；`Authorization: Bearer <DeepSeek key>`，**与对话用的是同一把 key**。公开资料给的价格约 $0.75 / 千次成功请求（另有报道写 ¥5 / 千次），失败、超时、空结果不计费，每账号各 5 次/秒——**以官方定价页为准**。
+   - **怎么接**：第 1~3 节照做，只有两处不同：① 常驻定义里 `EXA_API_KEY` **留空**（模板不用改）；② 确认 `config.toml` 的 `[providers.deepseek].api_key` 有值（对话 provider 是 DeepSeek 的机器天然满足），或在常驻定义里另加 `DEEPSEEK_API_KEY`。桥启动时发现没有 Exa key、有 DeepSeek key，就**自动改走 DeepSeek**（日志里 `backend=deepseek`，`/health` 也带 `"backend": "deepseek"`）；想强制就设 `EXA_BRIDGE_BACKEND=deepseek`。
+   - **代价**：没有 exa MCP（`mcp.json` 不写 exa），批量抓取、`maxCharacters`、`agent_run` 这些超集能力没有；AGENTS.md 里「切 `mcp__exa__*`」那几句要删掉，桥挂了就只剩 Bash curl。
+   - **为什么标「未实测」**：写这段时拿不到官方文档原文，响应字段名是从二手资料拼出来的；桥对字段做了多写法容错（`content`/`snippet`/`summary`、外面多包一层 `data` 都认），但仍要在真机上跑一次 `verify.py --e2e`，搜索/抓取都返回正文才算通。字段对不上时 `/search` 会回空结果、`/fetch` 回 `[exa-bridge] no content returned … (deepseek)`——照着官方文档改 `deepseek_search` / `deepseek_fetch` 两个函数即可。
+   - **兜底**：DeepSeek 也不想用，就退回"用 Bash curl 抓指定页面"（没有搜索能力，只有抓取）。
 
 非交互场景（`kimi -p "调试 kimi-code"`）没有提问通道：要在提示词里一次把平台、key、要不要 MCP 说全，或让用户改用交互会话。
 
