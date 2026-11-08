@@ -4,7 +4,8 @@
 
 | 结果 | 含义 | 下一步 |
 |------|------|--------|
-| `出网不通` / `代理出口不通` | 网络 / 代理层问题，**不是 kimi-code 的错**——体检脚本会替你区分"要走代理的域名全超时但直连正常"（=代理出口挂了）和"整机没网" | 代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；恢复后重试即可，不用改配置。细节见 `references/web-tools-exa.md`「排错速查」 |
+| `整机出网不通` / `联网后端（Exa 或 DeepSeek）的域名不通` | 网络 / 代理层问题，**不是 kimi-code 的错**。体检按桥的后端决定探哪些域名（Exa 探 `api.exa.ai` / `mcp.exa.ai`，DeepSeek 探 `api.deepseek.com`），并替你区分「后端域名不通但百度等正常」（代理出口挂了，或防火墙 / DNS 拦了）和「整机没网」；`PASS 出网` 那行会写明判断后端的依据 | 走代理的：代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；不走代理的：查防火墙 / DNS。恢复后重试即可，不用改配置。细节见 `references/web-tools-exa.md`「排错速查」 |
+| `出网：… 不通 —— 只影响用到它的那条通道` WARN | 后端域名通，但另一个用到的域名不通（典型：走 DeepSeek 又挂了 exa MCP，而 `mcp.exa.ai` 连不上） | 只影响 exa MCP；需要它就让代理放行 `mcp.exa.ai`，不需要就把 exa 从 `mcp.json` 删掉（连同第 4 步的放行规则） |
 | `services.*` 缺失或指向 Kimi 托管 | 大概被 `/login` 顶掉了 | 按第 2 步用补丁脚本加回来 |
 | `桥 /health 打不通` | 桥没在跑（实测会被静默杀掉：重启后没起来、或中途被杀；日志无 traceback 不代表没挂） | **先只认 `/health`**（别用 `Get-Process pythonw`——真名是 `pythonw3.13`）。**Windows 上先等 30 秒左右**：状态栏脚本的兜底最多 30 秒探活一次，拒连就拉起——**优先跑启动文件夹的 `kimi-exa-bridge.lnk`**（ShellExecute 由 explorer 起、不在我们的进程树里，runner 超时那记 `taskkill /T /F` 杀不到它），没有快捷方式才回退 `Popen`（直接拉 `launch.pyw`）；重试间隔 30 秒（实测 2 秒内自愈），`statusline/bridge-watch.json` 里能看到 `last_ok`/`relaunched`——别按 5~10 秒预期；还不行再手动救活：macOS `launchctl print gui/$(id -u)/ai.kimi.exa-bridge`；**Windows 跑一次 `kimi-exa-bridge.lnk`**（不用 `Get-ScheduledTaskInfo`，本机没建计划任务）；Linux `systemctl --user status ai.kimi.exa-bridge`。细节见 `references/bridge-windows.md` 2.5 |
 | `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐（别靠把桥的 token 留空来绕，见下一行） |

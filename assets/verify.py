@@ -131,25 +131,68 @@ def probe(url, timeout=6):
         return 0
 
 
-def check_network():
-    """先探出网，并区分"代理出口挂了"和"整机没网"——桥的失败不该被算成 kimi-code 配置错。"""
+def detect_backend(home, cfg):
+    """桥实际用哪家：先问桥的 /health（最准），桥不在就按 key 推断，规则与桥自己的 backend() 一致。"""
+    search = ((cfg or {}).get("services") or {}).get("moonshot_search") or {}
+    base = search.get("base_url") or ""
+    if is_local_endpoint(base):
+        m = re.match(r"(https?://[^/]+)", base)
+        try:
+            _, body = http_get("%s/health" % m.group(1), timeout=2)
+            got = json.loads(body).get("backend")
+            if got in ("exa", "deepseek"):
+                return got, "桥 /health"
+            return "exa", "桥 /health（旧版桥，无 backend 字段）"
+        except Exception:
+            pass
+    forced = os.environ.get("EXA_BRIDGE_BACKEND", "").strip().lower()
+    if forced in ("exa", "deepseek"):
+        return forced, "EXA_BRIDGE_BACKEND"
+    exa = (mcp_servers(home) or {}).get("exa") or {}
+    if os.environ.get("EXA_API_KEY") or any(k.lower() == "x-api-key" for k in (exa.get("headers") or {})):
+        return "exa", "找到 Exa key"
+    ds = ((cfg or {}).get("providers") or {}).get("deepseek") or {}
+    if os.environ.get("DEEPSEEK_API_KEY") or ds.get("api_key"):
+        return "deepseek", "没有 Exa key、有 DeepSeek key"
+    return "exa", "默认"
+
+
+def check_network(home, cfg):
+    """先探出网，并区分"联网后端的域名不通"和"整机没网"——桥的失败不该被算成 kimi-code 配置错。
+
+    要探哪些域名看桥的后端：走 DeepSeek 的机器（常见于国内、不开代理）根本用不着 Exa，
+    写死先探 Exa 会把它误判成"代理出口不通"。所有探测并发跑，代理卡住不回时最坏也只等一个超时。
+    """
     global NET_UP
-    need_proxy = ["https://api.exa.ai", "https://mcp.exa.ai/mcp"]
-    proxy_status = [(u, probe(u, 8)) for u in need_proxy]
-    hit = [u for u, code in proxy_status if code]
+    from concurrent.futures import ThreadPoolExecutor
+    backend, why = detect_backend(home, cfg)
+    if backend == "deepseek":
+        need = ["https://api.deepseek.com"]
+        direct = ["https://www.baidu.com"]
+    else:
+        need = ["https://api.exa.ai", "https://mcp.exa.ai/mcp"]
+        direct = ["https://api.deepseek.com", "https://www.baidu.com"]
+    if backend == "deepseek" and (mcp_servers(home) or {}).get("exa"):
+        need.append("https://mcp.exa.ai/mcp")      # 后端是 DeepSeek 但也挂了 exa MCP
+    urls = need + [u for u in direct if u not in need]
+    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        codes = dict(zip(urls, pool.map(lambda u: probe(u, 8), urls)))
+    hit = [u for u in need if codes[u]]
+    miss = [u for u in need if not codes[u]]
+    label = "DeepSeek" if backend == "deepseek" else "Exa"
     if hit:
-        add("PASS", "出网：%s 可达" % hit[0])
+        add("PASS", "出网：%s 可达（联网后端 %s，依据：%s）" % ("、".join(hit), label, why))
+        if miss:
+            add("WARN", "出网：%s 不通 —— 只影响用到它的那条通道" % "、".join(miss))
         return
     NET_UP = False
-    direct = ["https://api.deepseek.com", "https://www.baidu.com"]
-    direct_hit = [u for u in direct if probe(u, 6)]
+    direct_hit = [u for u in direct if codes[u]]
     if direct_hit:
-        add("FAIL", "代理出口不通：要走代理的域名（%s）全部超时，直连的 %s 却正常 —— "
-                    "去代理软件里换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 模式开着）；"
-                    "这不是 kimi-code 的配置问题" % ("、".join(need_proxy), "、".join(direct_hit)))
+        add("FAIL", "联网后端（%s）的域名不通：%s 全部超时，%s 却正常 —— 这些域名走代理的话，去代理软件里"
+                    "换节点 / 更新订阅 / 确认选中了可用节点（或 TUN 开着）；不走代理就查防火墙 / DNS；"
+                    "这不是 kimi-code 的配置问题" % (label, "、".join(need), "、".join(direct_hit)))
     else:
-        add("FAIL", "整机出网不通：连直连域名（%s）也全超时 —— 先查 Wi-Fi / 网线 / DNS，再复检"
-            % "、".join(direct))
+        add("FAIL", "整机出网不通：连 %s 也超时 —— 先查 Wi-Fi / 网线 / DNS，再复检" % "、".join(direct))
 
 
 def check_config(home):
@@ -844,9 +887,9 @@ def main():
         add("FAIL", "PATH 里找不到 kimi —— 先装：见 SKILL.md 第 0 步")
 
     check_doctor()
-    if not args.skip_net:
-        check_network()
     cfg = check_config(home)
+    if not args.skip_net:
+        check_network(home, cfg)            # 要先读配置：探哪些域名取决于桥的后端
     if cfg:
         base_url, token, local_tokens = check_services(cfg)
         if base_url and is_local_endpoint(base_url):
