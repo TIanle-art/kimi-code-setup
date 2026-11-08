@@ -10,6 +10,7 @@
 | `直打桥搜索 401` | `config.toml` 的令牌与桥的 `EXA_BRIDGE_TOKEN` 不一致 | 两边对齐（别靠把桥的 token 留空来绕，见下一行） |
 | `EXA_BRIDGE_TOKEN 留空` WARN | 桥不校验令牌：虽然只绑 127.0.0.1，本机任何进程都能免令牌调它、花你的 Exa 额度 | 生成一把令牌，写进常驻定义和 `config.toml` 两处 `services.*.api_key`（`patch-config.py set`），重启桥 |
 | `两处 services.*.api_key 不一致` | `moonshot_search` 与 `moonshot_fetch` 的令牌不是同一把——**只错一处时以前查不出来**，但 FetchURL 直打桥会 401 | 两处都该等于桥的 `EXA_BRIDGE_TOKEN`：用补丁脚本 `set` 对齐 |
+| 桥走 DeepSeek，抓取正文是 `DeepSeek HTTP 429` | 撞了 DeepSeek 限流：Fetch 每账号 25 QPS，且**同一目标域名**另有上限（Search 是 100 QPS） | 不是配置问题，隔几秒重试；批量抓同一个站时放慢节奏 |
 | `直打桥抓取 → …` 失败 | 桥的**抓取通道**坏了（Exa `contents` 报错 / key 没权限 / 额度耗尽）。这条最容易漏诊：桥对抓取失败一律回 200、把原因写进正文，CLI 会把它当正文吞掉，只有体检会直说 | 看消息里带的正文前 80 字符判断是哪类错；`/search` 正常而 `/fetch` 坏，基本是 Exa `contents` 侧的问题 |
 | `常驻定义令牌 … 不一致` / `常驻定义有 CR（\r）` | 常驻定义（plist / systemd unit / launch.pyw）里的令牌与 `config.toml` 对不上；最隐蔽的一种是 **CRLF 模板 sed 出来的定义**（令牌尾部多个回车） | 重新生成定义：`sed` 前先 `tr -d '\r' < 模板 \| sed …`；细节见 `references/web-tools-exa.md`「排错速查」 |
 | `桥脚本一致性 … 有漂移` / `守卫脚本一致性 … 有漂移` | skill 里的副本 ≠ 机器上在跑的 | 跑 `python3 "$SKILL_DIR/assets/deploy.py" --bridge`（按内容比对重新拷贝，并重启桥）；只想自己动手就 `cp` 过去 + 重启桥。**注意**：如果改动还停在正本、没进安装副本，先做正本→安装副本那一步同步 |
