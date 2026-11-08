@@ -6,7 +6,7 @@
 
 > **验证版本**：配置字段、权限模式文案、迁移行为、脚本契约实测于 **kimi-code 0.41.0（macOS，2026-09-15）**；Windows 分支的常驻方式、钩子/状态栏命令写法实测于 **Windows 11 + kimi-code 0.43.1（Store 版 Python 3.13，非管理员账户，2026-09-16）**；**Linux 分支的 systemd 常驻、桥三层验证、钩子实时拦截实测于 WSL2 + kimi-code 0.41.0（Python 3.14，2026-09-16）**；**Windows 11 + kimi-code 2.0.0（Python 3.11.9，非管理员，2026-09-18）复跑：主流程与 `assets/verify.py --e2e` 全通过；同期修复中文 Windows 的钩子提示 GBK 乱码（`-X utf8`，见 `references/todo-panel-guard.md`）**。实测结论都带"✅/❌ 实测"标注。换了版本（或机器上版本不同）先跑一次 `assets/verify.py` 看结论是否还对得上。
 
-- **DeepSeek Search / Fetch 后端**：2026-11 真机实测通过（`verify.py --e2e` 搜索 / 抓取都返回正文）。
+- **DeepSeek Search / Fetch 后端**：2026-11 Windows 11 真机实测通过（`verify.py --e2e` 搜索 / 抓取都返回正文）。
 
 ## 正本、安装副本与同步
 
