@@ -12,6 +12,17 @@
 
 检查项清单与判据看 `SKILL.md`「assets 里有什么」的 `verify.py` 一行；`verify.py` 的检查项会随版本增减，**项数对不上不代表配错了**。
 
+**怎么把历史快照复跑成现行**（只能在那台真机上做，别的机器上跑出来的数字不算）：
+
+```bash
+kimi --version
+python3 "$SKILL_DIR/assets/verify.py"       | tail -8   # 记下「合计：N 项通过 / N 项告警 / N 项失败」和失败项
+python3 "$SKILL_DIR/assets/verify.py" --e2e | tail -3   # 端到端那一行
+curl -s http://127.0.0.1:8787/health                     # 记下 backend（exa / deepseek）
+```
+
+把版本、日期、Python 版本、合计行、`backend` 和告警/失败项写进下面对应平台那一节，标题里的「⚠️ 历史快照」改成「✅ 现行」，再更新上面那张表。
+
 ## 作者机器现状（macOS，搬配置 / 对照用）
 
 - `~/.kimi-code/config.toml`：`default_model = "deepseek/deepseek-flash"`（DeepSeek V4.1 Flash）、`default_permission_mode = "yolo"`（Ask When Needed）、`[thinking] effort = "max"` 与该模型的 `default_effort = "max"`、`[services.*]` 指向本机 exa-bridge、`[[permission.rules]]` 放行 `mcp__exa__*`、`[[hooks]]` 一条 `Stop` 钩子指向 `~/.kimi-code/hooks/todo-panel-guard.py`（`timeout = 5`）。
