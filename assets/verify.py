@@ -410,24 +410,47 @@ def check_launch_def_selftest():
     add("PASS" if ok else "FAIL", "常驻定义解析行为：%s" % detail)
 
 
-def check_mcp(home):
+def mcp_servers(home):
+    """mcp.json 里的 mcpServers；没有文件返回 {}，解析失败返回 None。"""
     path = home / "mcp.json"
     if not path.exists():
-        add("WARN", "MCP：没有 %s（MCP 通道未配置）" % path)
-        return
+        return {}
     try:
-        servers = json.loads(path.read_text(encoding="utf-8")).get("mcpServers") or {}
-    except Exception as exc:
-        add("FAIL", "MCP：mcp.json 解析失败 %s" % exc)
+        return json.loads(path.read_text(encoding="utf-8")).get("mcpServers") or {}
+    except Exception:
+        return None
+
+
+def exa_allow_rule(cfg):
+    rules = ((cfg or {}).get("permission") or {}).get("rules") or []
+    return any(isinstance(r, dict) and r.get("decision") == "allow"
+               and str(r.get("pattern", "")).startswith("mcp__exa__") for r in rules)
+
+
+def check_mcp(home, cfg=None):
+    servers = mcp_servers(home)
+    if servers is None:
+        add("FAIL", "MCP：%s 解析失败 —— 修好 JSON 再说（改前先备份）" % (home / "mcp.json"))
         return
-    add("PASS", "MCP：mcp.json 已配置 %s" % (", ".join(sorted(servers)) or "（无）"))
     exa = servers.get("exa")
+    allowed = exa_allow_rule(cfg)
+    if servers:
+        add("PASS", "MCP：mcp.json 已配置 %s" % ", ".join(sorted(servers)))
     if exa:
         has_key = any(k.lower() == "x-api-key" for k in (exa.get("headers") or {}))
         add("PASS", "MCP exa：%s（%s）" % (exa.get("url"),
             "带 key，走自己的额度" if has_key else "匿名模式，不带 key"))
+        if allowed:
+            add("PASS", "权限：已放行 mcp__exa__*（与 mcp.json 里挂的 exa 对应）")
+        else:
+            add("WARN", "权限：挂了 exa MCP 却没放行 mcp__exa__* —— 每次调用都会弹确认；"
+                        "要放行就 patch-config.py ensure-rule allow 'mcp__exa__*'")
     else:
-        add("WARN", "MCP exa 缺失 —— 需要批量抓取/agent_run 时用不了")
+        # 只有选了 Exa（有 key 或匿名 MCP）才挂 exa；走 DeepSeek 的机器本来就没有，不算问题
+        add("INFO", "MCP exa：没挂（走 DeepSeek 后端、或用户没选 exa MCP 时属正常）")
+        if allowed:
+            add("WARN", "权限：放行了 mcp__exa__*，但 mcp.json 里没有 exa —— 多余的规则，"
+                        "用 patch-config.py remove-rule allow 'mcp__exa__*' 删掉")
 
 
 def check_tools(home):
@@ -451,9 +474,10 @@ def check_tools(home):
     if not names:
         add("WARN", "工具清单：最近 %d 个会话里都没有 tools_snapshot 记录" % len(wires))
         return
-    for label, prefix, level in (("WebSearch", "WebSearch", "FAIL"),
-                                 ("FetchURL", "FetchURL", "FAIL"),
-                                 ("mcp__exa__", "mcp__exa__", "WARN")):
+    checks = [("WebSearch", "WebSearch", "FAIL"), ("FetchURL", "FetchURL", "FAIL")]
+    if (mcp_servers(home) or {}).get("exa"):           # 只有挂了 exa MCP 才该有它的工具
+        checks.append(("mcp__exa__", "mcp__exa__", "WARN"))
+    for label, prefix, level in checks:
         found = [n for n in names if n.startswith(prefix)]
         add("PASS" if found else level, "工具 %s：%s" % (label, "%d 个" % len(found) if found else "缺失"))
     add("PASS", "工具总数：%d（最近 %d 个会话快照的并集）" % (len(names), used))
@@ -828,7 +852,7 @@ def main():
         if base_url and is_local_endpoint(base_url):
             check_bridge(base_url, token)
             check_launch_def(home, local_tokens)
-    check_mcp(home)
+    check_mcp(home, cfg)
     check_tools(home)
     check_hooks(home, cfg)
     check_statusline(home)

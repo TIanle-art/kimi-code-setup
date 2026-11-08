@@ -39,7 +39,7 @@ metadata:
 | 1 | LLM provider、模型与思考强度 | 新进程里能正常对话、思考强度符合预期 | `references/provider-model.md` |
 | 2 | 内置 WebSearch / FetchURL → 自己的 Exa（或 DeepSeek） | 三层验证全过；Windows 上自启项写完要回读 | `references/web-tools-exa.md` + `references/bridge-<平台>.md` |
 | 3 | exa MCP（只在有 Exa key 时） | 工具清单里出现 `mcp__exa__*` | 本文 |
-| 4 | 权限模式与工具开关 | 启动就是 Ask When Needed、联网工具没被 disabled | 本文 |
+| 4 | 权限模式与工具开关 | 启动就是 Ask When Needed、联网工具没被 disabled；选了 exa 才放行 `mcp__exa__*` | 本文 |
 | 5 | 策略文件 AGENTS.md | 模型知道何时用哪条通道；任务清单三条约定在里面 | 本文 |
 | 6 | Todo 面板守卫（Stop 钩子） | `verify.py` 钩子项 PASS + 一次 `kimi -p` 实测 | `references/todo-panel-guard.md` |
 | 7 | 状态栏（缓存命中率 + 余额） | `verify.py` 状态栏项 PASS；`/reload-tui` 后 footer 出现 `cache N%` | `references/statusline.md` |
@@ -113,7 +113,12 @@ python3 "$P" check
 
 ```bash
 python3 "$SKILL_DIR/assets/patch-config.py" set default_permission_mode yolo
-python3 "$SKILL_DIR/assets/patch-config.py" ensure-rule allow 'mcp__exa__*'    # 走 DeepSeek 的机器不用这条
+```
+
+**只有用户选了 exa（第 0 步的 ① 或 ②，第 3 步挂了 exa MCP）才放行它**；走 DeepSeek（③）的机器没有 exa MCP，**别加这条**——`verify.py` 会把"没挂 exa 却放行"报成多余规则：
+
+```bash
+python3 "$SKILL_DIR/assets/patch-config.py" ensure-rule allow 'mcp__exa__*'    # 仅 exa 路线
 ```
 
 | 配置值 | 界面名 | 行为 |
