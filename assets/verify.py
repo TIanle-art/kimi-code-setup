@@ -230,8 +230,9 @@ def check_bridge(base_url, token):
     try:
         status, body = http_get(health_url)
     except Exception as exc:
-        add("FAIL", "桥 /health 打不通（%s）：%s —— 先把它救活（见 references/web-tools-exa.md 第 3 步）"
-            % (health_url, exc))
+        plat_doc = ("bridge-macos.md" if IS_MAC else "bridge-windows.md" if IS_WINDOWS else "bridge-linux.md")
+        add("FAIL", "桥 /health 打不通（%s）：%s —— 先把它救活（见 references/%s）"
+            % (health_url, exc, plat_doc))
         return
     try:
         info = json.loads(body)
