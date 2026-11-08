@@ -20,6 +20,9 @@
 | `触发链：…` WARN | skill **既不在 `~/.kimi-code/skills/`、`~/.kimi-code/AGENTS.md` 里也没有指路**——表现是「skill 突然不生效」 | 把目录拷进 `~/.kimi-code/skills/kimi-code-setup/`，或在 `AGENTS.md` 里加一条含 "kimi-code-setup" 字样的触发约定（见「这个目录放在哪、怎么用」） |
 | `kimi doctor` 非 0 | `config.toml` / `tui.toml` 连 CLI 都读不进去（手改出语法错 / 补丁脚本被绕过） | `patch-config.py check` 只看结构，doctor 是"CLI 能否真的读进去"的最终判据；对照 `.bak` 还原或按对应章节重跑补丁脚本 |
 | `补丁脚本行为 … FAIL` | skill 里的 `patch-config.py` 被改坏（幂等 / 复验 / 删除逻辑） | 它是一切改配置动作的底座，先用备份或重新拷 skill 副本修好它，再动别的 |
+| `MCP exa：没挂` INFO | mcp.json 里没有 exa——走 DeepSeek 后端、或用户没选 exa MCP | 正常，不用管；想加 exa MCP 就按第 3 步挂上，再按第 4 步放行 |
+| `权限：挂了 exa MCP 却没放行` WARN | 选了 exa，但第 4 步的放行规则没加 | `patch-config.py ensure-rule allow 'mcp__exa__*'`；不想放行（每次确认）也行，告警可忽略 |
+| `权限：放行了 mcp__exa__*，但 mcp.json 里没有 exa` WARN | 走 DeepSeek 却照抄了 exa 路线的放行规则 | `patch-config.py remove-rule allow 'mcp__exa__*'` 删掉 |
 | 工具清单缺 `WebSearch` | `[tools] disabled` 关了它，或版本变了 | 看第 4 步；版本变了先核对本文的验证版本 |
 | 日志里同一条 WARN 反复出现（体检会报） | 后台任务空转；最常见是 `session index reconciliation failed`（实验特性 minidb read-model 在重建会话索引） | 它只是加速用的读模型，**不影响正常干活**；成功一次后会打印 `repaired drift` 自愈。持续刷屏时可以 `find ~/.kimi-code -name .DS_Store -delete` 清掉 Finder 垃圾再跑一次；仍不行就设 `KIMI_CODE_EXPERIMENTAL_PERSISTENCE_MINIDB_READMODEL=false` 关掉该实验特性（**实测有效**：关掉后日志里连 `minidb query-store opening` 都不再出现） |
 
