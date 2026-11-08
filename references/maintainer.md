@@ -43,3 +43,24 @@
 - 正本是个 git 仓库（`origin` = 公开仓库）：动手前 `git status` 确认工作区干净，改完 `git commit` + `git push`。**别再用 `cp -a` 做目录备份**——git 就是备份，`cp -a` 只会把 `.git` / `__pycache__` 一起拷进去。
 - 换了 kimi-code 版本，先跑 `verify.py`，再更新本文件「各平台验证版本」和 `SKILL.md` 顶部那句摘要。
 - 改了目录名或位置，记得同步：frontmatter 的 `name`、本文件与 `references/` 里的 `$SKILL_DIR` 说明、以及作者机器上 `~/.kimi-code/AGENTS.md` 里的指路与触发约定。
+
+## assets 逐个详解
+
+`SKILL.md` 里只留一行一句；每个脚本的完整职责、边界与「脚本漂移」比对范围在这里。表里的「第 N 步」指 `SKILL.md` 主流程，「本文件」指 `SKILL.md`。
+
+| 脚本 | 干什么 |
+|------|--------|
+| `assets/exa-bridge.py` | 内置 WebSearch / FetchURL 的适配器（转调 Exa；没有 Exa key 但有 DeepSeek key 时自动改调 DeepSeek Search/Fetch，`EXA_BRIDGE_BACKEND` 可强制），部署到 `~/.kimi-code/exa-bridge/`；本文件里的副本 = 机器上在跑的那份 |
+| `assets/launchagent.plist.template` | macOS LaunchAgent 模板（占位符替换，别手写 XML） |
+| `assets/systemd-user.service.template` | Linux systemd 用户单元模板（同一套占位符；**2026-09-16 在 WSL2 实测通过**）。生成时的 `sed` 前面必须先 `tr -d '\r'`——CRLF 模板会把 `\r` 带进令牌，桥直接 401（见 `references/web-tools-exa.md`） |
+| `assets/windows-launch.pyw.template` | Windows 桥启动器模板（给 `pythonw.exe` 用）：替桥写进 `EXA_BRIDGE_TOKEN` / `EXA_API_KEY`，并把 stdout/stderr 重定向到 `bridge.log`——计划任务与启动文件夹都塞不进环境变量，`pythonw` 又没有控制台。部署到 `~/.kimi-code/exa-bridge/launch.pyw`，见 `references/web-tools-exa.md` 第 3 节（Windows） |
+| `assets/todo-panel-guard.py` | Stop 钩子：Todo 面板里的任务全部 `done` 却没清空时，拦下回合结束并提示先清空；部署到 `~/.kimi-code/hooks/`，见第 6 步 |
+| `assets/statusline.py` | footer 状态栏：常显整个会话的缓存命中率与 provider 余额；部署到 `~/.kimi-code/`，靠 `tui.toml` 的 `[status_line]` 挂上，见第 7 步 |
+| `assets/statusline-fast.c` | **Windows 专用**：状态栏热路径（编成 `statusline-fast.exe`，`gcc -O2 -static -s`）。同步 Python 空闲 240ms、忙时 400ms+，顶不住 300ms 预算；改由它做「快照落盘 + 打印预渲染行 + 拉起守护进程」，实测 **44–73ms**。见 `references/statusline.md` |
+| `assets/statusline-daemon.pyw` | **Windows 专用**：状态栏守护进程（常驻 pythonw，约 1% CPU），读 `payload_*.json` 渲染 `line_*.txt`，顺带管 exa-bridge 探活与余额刷新；空闲 1 小时自动退出，热路径按心跳自动拉起 |
+| `assets/kimi-web-status.user.js` | 浏览器用户脚本（Tampermonkey）：把 cache/bal 显示在 `kimi web` 页面角落，数据来自桥的 `/status`；见 `references/statusline.md`「web 端」 |
+| `assets/patch-config.py` | **改 config.toml / tui.toml 只用它**：幂等（存在就改值、不存在才插入）、保留注释、写前备份、写前复验（不通过不落盘）；数组表用 `ensure-rule` / `ensure-hook` 按内容去重追加，`unset` / `remove-rule` / `remove-hook` 负责删除（回滚用）；`--raw` 写裸值，默认按字符串加引号。值里带 `\r` / `\n` 会**当场拒绝**（CRLF 坑的防线之一） |
+| `assets/deploy.py` | **部署只用它**（幂等，可反复跑）：把上面这些部署脚本同步到各自落地点（Windows 5 个 / macOS·Linux 3 个），**按内容比对**——一致就一个字节都不动；Windows 上 `.c` 变过、或 exe 缺失/落后时用 MSYS2 gcc 重编 `statusline-fast.exe`，再重启状态栏守护进程让它加载新代码。`--check` 只报告（有漂移退 2），`--bridge` 连桥一起重启（会短暂中断搜索）。**不做**正本→安装副本的同步，也不碰 `config.toml` / `tui.toml`；体检报「脚本漂移」后跑它就收尾 |
+| `assets/verify.py` | **一条命令体检**（分类摘要，细节以脚本输出为准）：CLI 版本 / `kimi doctor` / 出网 / 配置（默认模型、思考强度、权限模式、工具开关）/ `[services.*]` 端点**与两处 `api_key` 一致性** / 桥（`/health`、Exa key、`/status`、直打 `/search` **与 `/fetch`**）/ 常驻定义令牌一致性（与两处 `api_key` 对账）+ 解析自测 / MCP / 工具清单 / 钩子（含行为自测）/ 状态栏（含行为自测；Windows 热路径另查「三件套齐全」与守护脚本一致性）/ 日志扫描 / 脚本漂移 / 补丁脚本自测 / 触发链；`--e2e` 再加一次真实端到端。只读，返回 0/1/2 |
+
+> **「脚本漂移」比的是这 4 个部署脚本**：`assets/exa-bridge.py` → `~/.kimi-code/exa-bridge/exa-bridge.py`、`assets/todo-panel-guard.py` → `~/.kimi-code/hooks/todo-panel-guard.py`、`assets/statusline.py` → `~/.kimi-code/statusline.py`、`assets/statusline-daemon.pyw` → `~/.kimi-code/statusline-daemon.pyw`（Windows）。**不比对** `patch-config.py`、`verify.py`、`statusline-fast.c` 编译出的 `statusline-fast.exe`（本机产物）、三个 `.template` 生成出的常驻定义、`kimi-web-status.user.js`。

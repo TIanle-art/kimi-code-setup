@@ -395,7 +395,7 @@ def build_line(payload):
 
 
 # --- exa-bridge 兜底（Windows）------------------------------------------------
-# 桥被杀过两次（见 skill 的 references/web-tools-exa.md 2.5），而启动文件夹的自启不会把
+# 桥被杀过两次（见 skill 的 references/bridge-windows.md 2.5），而启动文件夹的自启不会把
 # 它拉活（macOS 的 launchd / Linux 的 systemd 都会）。这条命令在会话里每秒跑一次，顺手
 # 探活最省事：只做 TCP connect（不发请求、不读响应），拒连就 detached 拉起。
 BRIDGE_WATCH_INTERVAL_S = 30

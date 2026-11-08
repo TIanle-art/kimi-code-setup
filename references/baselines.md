@@ -30,7 +30,7 @@
 - 工具清单项是"最近 3 个会话快照的并集"，因为 `kimi -p` 有时在 MCP 握手前就拍快照。
 - `config.toml` / `tui.toml`：字段与 macOS 完全一致（`yolo`、`[thinking] effort = "max"`、`[services.*]` 指本机桥、`[[permission.rules]]` 放行 `mcp__exa__*`），另加 `[status_line].command = "C:/Users/<你>/.kimi-code/statusline-fast.exe"`（Windows 热路径）。
 - 钩子命令写成 `python3 C:/Users/<你>/.kimi-code/hooks/todo-panel-guard.py`（**实测 kimi 用 `cmd.exe` 执行钩子命令**，`%USERPROFILE%` 也会展开；但 Store 版 Python 没有 `py` 启动器，别写 `py -3`）。**状态栏不再直连 Python**：本机实测同步跑 Python 空闲 ≈240ms、忙时 400ms+，300ms 预算站不住（runner 超时即 `taskkill /T /F` 丢结果）；改走热路径 exe（**44–73ms**，runner 复刻 12 连测全过）+ 守护进程，详见 `references/statusline.md`。
-- 常驻：启动文件夹快捷方式 `kimi-exa-bridge.lnk` → `pythonw.exe "%USERPROFILE%\.kimi-code\exa-bridge\launch.pyw"`（计划任务被非管理员权限拒、`HKCU\...\Run` 被火绒回滚，见 `references/web-tools-exa.md`）。桥日志照常落在 `%USERPROFILE%\.kimi-code\exa-bridge\bridge.log`。
+- 常驻：启动文件夹快捷方式 `kimi-exa-bridge.lnk` → `pythonw.exe "%USERPROFILE%\.kimi-code\exa-bridge\launch.pyw"`（计划任务被非管理员权限拒、`HKCU\...\Run` 被火绒回滚，见 `references/bridge-windows.md`）。桥日志照常落在 `%USERPROFILE%\.kimi-code\exa-bridge\bridge.log`。
 
 ## Linux 实测基线（2026-09-16，WSL2 + kimi-code 0.41.0，Python 3.14.7，非 root）—— ⚠️ 历史快照
 
